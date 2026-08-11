@@ -245,6 +245,35 @@ def gemini_response_text(response: dict[str, Any]) -> str:
     raise ValueError("Gemini 응답에 텍스트가 없습니다.")
 
 
+def gemini_error_notice(error: Exception) -> str:
+    """Return a debuggable Gemini failure notice without exposing request URLs or API keys."""
+    if isinstance(error, urllib.error.HTTPError):
+        hints = {
+            400: "요청 형식 또는 응답 스키마를 확인하세요.",
+            401: "GEMINI_API_KEY가 올바른지 확인하세요.",
+            403: "API 키 권한, API 활성화 상태 또는 프로젝트 제한을 확인하세요.",
+            404: "GEMINI_MODEL 이름과 해당 모델의 사용 가능 여부를 확인하세요.",
+            429: "Gemini API 할당량 또는 요금제 한도에 도달했습니다.",
+        }
+        detail = ""
+        try:
+            body = json.loads(error.read().decode("utf-8", errors="replace"))
+            message = body.get("error", {}).get("message")
+            if isinstance(message, str):
+                detail = f" API 메시지: {message[:240]}"
+        except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+            pass
+        hint = hints.get(error.code, "Gemini API 또는 네트워크 상태를 확인하세요.")
+        return f"Gemini API 호출 실패 (HTTP {error.code}): {hint}{detail}"
+    if isinstance(error, urllib.error.URLError):
+        return "Gemini API 네트워크 연결에 실패했습니다. 인터넷 연결과 방화벽 설정을 확인하세요."
+    if isinstance(error, TimeoutError):
+        return "Gemini API 응답 시간이 초과되었습니다. 잠시 후 다시 시도하세요."
+    if isinstance(error, json.JSONDecodeError):
+        return "Gemini API 응답을 JSON으로 해석하지 못했습니다. 모델 또는 응답 형식을 확인하세요."
+    return "Gemini API 응답이 예상한 코치 형식과 다릅니다. 모델과 응답 스키마를 확인하세요."
+
+
 def valid_coach(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
@@ -354,7 +383,7 @@ def gemini_coach(context: dict[str, Any]) -> dict[str, Any]:
         coach["model"] = model
         return coach
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, json.JSONDecodeError) as error:
-        fallback["notice"] = f"GenAI 호출을 완료하지 못해 규칙 기반 코치로 안내합니다: {type(error).__name__}"
+        fallback["notice"] = gemini_error_notice(error)
         return fallback
 
 
