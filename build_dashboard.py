@@ -227,6 +227,35 @@ def root_mean_squared_error(predicted: np.ndarray, actual: np.ndarray) -> float:
     return float(np.sqrt(np.mean((predicted - actual) ** 2)))
 
 
+def risk_ranking_validation(rows: list[dict], predicted: np.ndarray, actual: np.ndarray) -> dict:
+    """Check whether the model's high-risk ranks also had higher future closure.
+
+    Ranks are calculated within an industry, matching the dashboard's comparison
+    unit.  The held-out target quarter is never used to fit the model.
+    """
+    by_industry: dict[str, list[int]] = defaultdict(list)
+    for index, row in enumerate(rows):
+        by_industry[row["ic"]].append(index)
+
+    high, low = [], []
+    for indexes in by_industry.values():
+        ranks = percentile_ranks([float(predicted[index]) for index in indexes])
+        for position, index in enumerate(indexes):
+            if ranks[position] >= 0.75:
+                high.append(float(actual[index]))
+            if ranks[position] <= 0.25:
+                low.append(float(actual[index]))
+
+    return {
+        "unit": "same_industry_quartile",
+        "high_risk_count": len(high),
+        "low_risk_count": len(low),
+        "high_risk_actual_close_rate": round(float(np.mean(high)), 2) if high else None,
+        "low_risk_actual_close_rate": round(float(np.mean(low)), 2) if low else None,
+        "gap_percentage_points": round(float(np.mean(high) - np.mean(low)), 2) if high and low else None,
+    }
+
+
 def next_quarter_code(quarter: str) -> str:
     year, quarter_number = int(quarter[:4]), int(quarter[4])
     return f"{year}{quarter_number + 1}" if quarter_number < 4 else f"{year + 1}1"
@@ -262,6 +291,7 @@ def train_ai_model(pairs_by_quarter: dict[str, list[dict]], source_quarters: lis
     test_predictions = ridge_predict(evaluation_model, test_rows)
     test_actual = np.asarray([row["target"] for row in test_rows], dtype=float)
     baseline_predictions = np.asarray([row["cr"] for row in test_rows], dtype=float)
+    risk_validation = risk_ranking_validation(test_rows, test_predictions, test_actual)
 
     final_train = [row for quarter in source_quarters for row in pairs_by_quarter[quarter]]
     final_model = fit_ridge(final_train, industries, selected_alpha)
@@ -288,6 +318,10 @@ def train_ai_model(pairs_by_quarter: dict[str, list[dict]], source_quarters: lis
         "baseline_mae": round(mean_absolute_error(baseline_predictions, test_actual), 2),
         "tuning_mae": round(min(candidate_scores)[0], 2),
         "feature_labels": FEATURE_LABELS,
+        "risk_index": {
+            "method": "same_industry_rank_of_ml_predicted_next_quarter_close_rate",
+            "validation": risk_validation,
+        },
     }
     return metrics, final_model
 
@@ -393,9 +427,10 @@ def main() -> None:
         decline_p = percentile_ranks([-(record["g"] if record["g"] is not None else 0) for record in industry_records])
         prediction_p = percentile_ranks([record["mp"] for record in industry_records])
         for index, record in enumerate(industry_records):
-            # The weights deliberately make observed closure and competition the
-            # largest signals. Scores compare only the same industry across Seoul.
-            risk = round(100 * (0.35 * close_p[index] + 0.25 * density_p[index] + 0.25 * (1 - sales_p[index]) + 0.15 * decline_p[index]))
+            # The risk index is no longer a manually weighted formula. It is the
+            # same-industry rank of the Ridge model's next-quarter closure-rate
+            # estimate, whose coefficients were fitted on historical quarters.
+            risk = round(100 * prediction_p[index])
             record["r"] = risk
             record["rl"] = risk_label(risk)
             record["x"] = [
@@ -404,8 +439,44 @@ def main() -> None:
                 round(100 * (1 - sales_p[index])),
                 round(100 * decline_p[index]),
             ]
-            record["mr"] = round(100 * prediction_p[index])
+            # Keep one shared rank for both labels shown in the dashboard. This
+            # prevents the relative-risk card and forecast explanation drifting
+            # apart through duplicated calculations or rounding.
+            record["mr"] = risk
             record["ml"] = risk_label(record["mr"])
+
+        # The opportunity axis uses net entry rather than openings alone: a
+        # place where openings are high but closures are even higher is not
+        # automatically a growth market.  Both axes remain same-industry
+        # comparisons so categories are not distorted by industry scale.
+        net_entry = [record["or"] - record["cr"] for record in industry_records]
+        entry_median = statistics.median(net_entry)
+        sales_median = statistics.median(record["ss"] for record in industry_records)
+        for index, record in enumerate(industry_records):
+            risk_high = record["mr"] >= 50
+            entry_high = net_entry[index] >= entry_median
+            record["ne"] = round(net_entry[index], 1)
+            record["eh"] = entry_high
+            if not risk_high and entry_high:
+                record["q"] = "stable_growth"
+                record["ql"] = "안정적 성장"
+                record["qd"] = "예측 폐업 위험은 낮고 순점포 증감은 활발한 확장 후보입니다."
+            elif risk_high and entry_high:
+                record["q"] = "red_ocean"
+                record["ql"] = "경쟁 치열"
+                record["qd"] = "진입은 활발하지만 예측 폐업 위험도 높아 비용·차별화 검증이 필요합니다."
+            elif not risk_high:
+                record["q"] = "mature_stable"
+                record["ql"] = "성숙·안정"
+                record["qd"] = "예측 폐업 위험은 낮지만 순점포 증감은 낮아 현장 수요 확인이 중요합니다."
+            elif record["ss"] >= sales_median and record["g"] is not None and record["g"] >= 0:
+                record["q"] = "niche_candidate"
+                record["ql"] = "틈새 검토"
+                record["qd"] = "수축 신호 안에서도 점포당 매출과 최근 추세가 버티는지 추가 검토할 후보입니다."
+            else:
+                record["q"] = "contraction_risk"
+                record["ql"] = "수축 위험"
+                record["qd"] = "진입과 안정성 모두 약한 편으로 계약 전 수요·비용을 보수적으로 확인해야 합니다."
 
     industries = sorted(
         ({"code": code, "name": rows[0]["i"], "count": len(rows)} for code, rows in by_industry.items()),
@@ -439,5 +510,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

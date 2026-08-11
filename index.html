@@ -36,6 +36,11 @@
     .factor { display:grid; grid-template-columns:116px 1fr 38px; align-items:center; gap:9px; margin:11px 0; font-size:12px; }
     .track { height:8px; background:#edf1f6; border-radius:99px; overflow:hidden; }.fill { height:100%; background:var(--blue); border-radius:99px; }.fill.warn { background:var(--orange); }.fill.high { background:var(--red); }.fill.good { background:var(--green); }
     .factor strong { text-align:right; font-variant-numeric:tabular-nums; }
+    .quadrant-grid { display:grid; grid-template-columns:1fr 1fr; border:1px solid var(--line); border-radius:10px; overflow:hidden; margin-top:10px; }
+    .quadrant-cell { min-height:112px; padding:12px; border-right:1px solid var(--line); border-bottom:1px solid var(--line); background:#fafbfd; color:var(--muted); font-size:12px; }
+    .quadrant-cell:nth-child(2n) { border-right:0; }.quadrant-cell:nth-child(n+3) { border-bottom:0; }
+    .quadrant-cell b { display:block; margin-bottom:4px; color:var(--ink); font-size:13px; }.quadrant-cell.active { outline:3px solid var(--blue); outline-offset:-3px; background:var(--sky); color:#29456f; }.quadrant-cell.red.active { outline-color:var(--red); background:var(--red-bg); }.quadrant-cell.green.active { outline-color:var(--green); background:var(--green-bg); }
+    .quadrant-axis { display:flex; justify-content:space-between; gap:8px; margin:10px 0 0; color:var(--muted); font-size:11px; }
     .chart-wrap { height:248px; } .chart-wrap svg { width:100%; height:100%; overflow:visible; }
     .axis { stroke:#d5dce7; stroke-width:1; }.chart-path { fill:none; stroke:var(--blue); stroke-width:3; stroke-linecap:round; stroke-linejoin:round; }.chart-dot { fill:var(--blue); }.chart-label { fill:var(--muted); font-size:11px; }
     .table-wrap { overflow-x:auto; } table { width:100%; border-collapse:collapse; font-size:13px; } th,td { padding:11px 8px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; } th:first-child,td:first-child { text-align:left; } th { color:var(--muted); font-size:12px; font-weight:700; } td { font-variant-numeric:tabular-nums; }
@@ -90,9 +95,8 @@
       select.value = state.dong;
     }
     function strongest(rec) {
-      const labels = ['폐업 부담','점포 밀도','매출/점포 부족','최근 매출 감소'];
-      const index = rec.x.indexOf(Math.max(...rec.x));
-      return labels[index];
+      const index = rec.mi?.[0]?.[0];
+      return dataset.meta.ai_model.feature_labels[index] || '상권 지표';
     }
     function factorRows(rec) {
       const labels = ['폐업 부담','점포 밀도','매출/점포 부족','최근 매출 감소'];
@@ -110,6 +114,22 @@
       const diff = (ai.baseline_mae - ai.holdout_mae).toFixed(2);
       const comparison = Number(diff) > 0 ? `기준선보다 ${diff}%p 낮음` : `기준선보다 ${Math.abs(diff).toFixed(2)}%p 높음`;
       return `시간 순서 홀드아웃(${ai.holdout_feature_quarter} → ${ai.holdout_target_quarter}) MAE ${ai.holdout_mae}%p · 현재 폐업률 기준선 대비 ${comparison}`;
+    }
+    function riskValidation() {
+      const validation = dataset.meta.ai_model.risk_index?.validation;
+      if (validation?.gap_percentage_points === null || validation?.gap_percentage_points === undefined) return '홀드아웃 표본에서 위험 순위의 차이를 계산하지 못했습니다.';
+      return `시간 순서 홀드아웃에서 동일 업종 상위 25% 위험군의 실제 다음 분기 폐업률은 ${validation.high_risk_actual_close_rate}%이고, 하위 25%는 ${validation.low_risk_actual_close_rate}%로 ${validation.gap_percentage_points}%p 차이였습니다.`;
+    }
+    function quadrantPanel(rec, rows) {
+      const entryMedian = median(rows.map(row => row.ne));
+      const active = rec.q === 'niche_candidate' || rec.q === 'contraction_risk' ? 'downside' : rec.q;
+      const cells = [
+        ['mature_stable', '성숙·안정', '낮은 폐업 위험 · 낮은 순점포 증감'],
+        ['stable_growth', '안정적 성장', '낮은 폐업 위험 · 높은 순점포 증감'],
+        ['downside', '수축 위험 / 틈새 검토', '높은 폐업 위험 · 낮은 순점포 증감'],
+        ['red_ocean', '경쟁 치열', '높은 폐업 위험 · 높은 순점포 증감'],
+      ];
+      return `<section class="card quadrant-card"><h2>안정성 × 시장 진입 4분면</h2><p class="method" style="margin-top:-8px">개업률만 보지 않고 <b>순점포 증감률(개업률 − 폐업률)</b>을 사용합니다. 선택 상권은 <b>${esc(rec.ql)}</b> 영역입니다.</p><div class="quadrant-grid">${cells.map(([key,title,detail]) => `<div class="quadrant-cell ${key === active ? `active ${key === 'red_ocean' || key === 'downside' ? 'red' : 'green'}` : ''}"><b>${title}</b>${detail}</div>`).join('')}</div><div class="quadrant-axis"><span>↑ 안정성: AI 예측 폐업 위험 낮음</span><span>시장 진입: 순점포 증감 높음 →</span></div><p class="method">선택 상권 순점포 증감률 ${rec.ne.toFixed(1)}%p · 동일 업종 중앙값 ${entryMedian.toFixed(1)}%p<br>${esc(rec.qd)}</p></section>`;
     }
     function scenarioForm() {
       return `<form id="scenario-form" class="scenario-form"><div><label for="rent">월 임대료 (만 원)</label><input id="rent" name="rent_manwon" type="number" min="0" max="20000" value="250" required></div><div><label for="fixed">기타 월 고정비 (만 원)</label><input id="fixed" name="other_fixed_manwon" type="number" min="0" max="20000" value="350" required></div><div><label for="variable">변동비율 (%)</label><input id="variable" name="variable_cost_rate" type="number" min="1" max="95" value="35" required></div><div><label for="basket">예상 객단가 (원)</label><input id="basket" name="basket_won" type="number" min="1000" max="1000000" value="9000" required></div><div><label for="days">월 영업일</label><input id="days" name="operating_days" type="number" min="1" max="31" value="26" required></div><div><label for="adjustment">매출 가정 조정 (%)</label><input id="adjustment" name="sales_adjustment" type="number" min="-50" max="50" value="0" required></div><div><label for="budget">초기 운영예산 (만 원)</label><input id="budget" name="startup_budget_manwon" type="number" min="0" max="500000" value="8000" required></div><div class="form-span"><button class="button" type="submit">12개월 운영 시나리오 계산</button></div></form>`;
@@ -169,16 +189,17 @@
       document.querySelector('#quarter').textContent=`분석 기준: ${dataset.meta.latest_quarter.slice(0,4)}년 ${dataset.meta.latest_quarter.slice(4)}분기`;
       document.querySelector('#app').innerHTML = `
         <section class="summary" aria-label="핵심 지표">
-          <article class="card risk-card ${keyClass(rec.rl)}"><div><div class="metric-label">현재 상권 리스크 지수 <span class="pill ${keyClass(rec.rl)}">${rec.rl}</span></div><div class="metric-sub">폐업·경쟁·수요·매출 추세를 동일 업종과 비교</div></div><div class="risk-score"><b>${rec.r}</b><span>100점 기준</span></div></article>
-          <article class="card ai-card ${keyClass(rec.ml)}"><div class="metric-label">AI 다음 분기 폐업률 예측 <span class="pill ${keyClass(rec.ml)}">${rec.ml}</span></div><div class="metric">${rec.mp.toFixed(1)}%</div><div class="metric-sub">검증 오차 기준 범위 ${rec.mlow.toFixed(1)}% ~ ${rec.mhigh.toFixed(1)}%</div></article>
+          <article class="card risk-card ${keyClass(rec.rl)}"><div><div class="metric-label">동일 업종 내 예측 위험 순위 <span class="pill ${keyClass(rec.rl)}">${rec.rl}</span></div><div class="metric-sub">AI 예상 폐업률을 서울 행정동끼리 비교한 상대값</div></div><div class="risk-score"><b>${rec.r}</b><span>위험도 상위 ${Math.max(1,100-rec.r)}%</span></div></article>
+          <article class="card ai-card ${keyClass(rec.ml)}"><div class="metric-label">AI 다음 분기 폐업률 예측 <span class="pill ${keyClass(rec.ml)}">${rec.ml}</span></div><div class="metric">${rec.mp.toFixed(1)}%</div><div class="metric-sub">절대 예측값 · 검증 오차 기준 ${rec.mlow.toFixed(1)}% ~ ${rec.mhigh.toFixed(1)}%</div></article>
           <article class="card"><div class="metric-label">폐업률 / 폐업점포</div><div class="metric">${rec.cr}% <span style="font-size:16px">· ${count(rec.c)}</span></div><div class="metric-sub">동일 업종 중앙값 ${medClose.toFixed(1)}%</div></article>
           <article class="card"><div class="metric-label">점포당 추정매출</div><div class="metric">${won(rec.ss)}</div><div class="metric-sub">동일 업종 중앙값 ${won(medSales)}</div></article>
           <article class="card"><div class="metric-label">점포당 분기 유동인구</div><div class="metric">${fmt.format(rec.ps)}</div><div class="metric-sub">동일 업종 중앙값 ${fmt.format(medFlow)}</div></article>
         </section>
         <section class="grid">
-          <article class="card"><h2>${rec.d} · ${rec.i} 진단</h2><p class="insight">${summary}</p><div class="rank-note">최근 개업 ${count(rec.o)} · 전체 점포 ${count(rec.s)} · 프랜차이즈 ${count(rec.f)} · 직전 분기 대비 점포당 매출 ${pct(rec.g)}</div><div class="ai-forecast"><strong>AI 예측</strong> · ${dataset.meta.ai_model.forecast_quarter.slice(0,4)}년 ${dataset.meta.ai_model.forecast_quarter.slice(4)}분기 예상 폐업률은 <strong>${rec.mp.toFixed(1)}%</strong>이며, 동일 업종 내 예측 위험도 상위 ${Math.max(1,100-rec.mr)}%입니다.<div class="signal-list">${aiSignals(rec)}</div></div><h3>현재 위험 신호의 상대 위치</h3>${factorRows(rec)}</article>
+          <article class="card"><h2>${rec.d} · ${rec.i} 진단</h2><p class="insight">${summary}</p><div class="rank-note">최근 개업 ${count(rec.o)} · 전체 점포 ${count(rec.s)} · 프랜차이즈 ${count(rec.f)} · 직전 분기 대비 점포당 매출 ${pct(rec.g)}</div><div class="ai-forecast"><strong>두 수치 읽는 법</strong> · <strong>${rec.mp.toFixed(1)}%</strong>는 다음 분기 폐업률의 절대 예측값이고, 위험도 상위 <strong>${Math.max(1,100-rec.r)}%</strong>는 같은 업종 안에서의 상대 순위입니다.<div class="signal-list">${aiSignals(rec)}</div></div><h3>현재 위험 신호의 상대 위치</h3>${factorRows(rec)}</article>
           <article class="card"><h2>점포당 추정매출 추이</h2>${chart(rec.h)}<p class="method">매출 총액을 해당 업종의 전체 점포 수로 나눈 값입니다. 매출이 없는 공개 항목은 비교 대상에서 제외될 수 있습니다.</p></article>
         </section>
+        ${quadrantPanel(rec, rows)}
         <section class="grid">
           <article class="card"><h2>동일 업종 비교</h2><div class="table-wrap"><table><thead><tr><th>지표</th><th>선택 상권</th><th>동일 업종 중앙값</th><th>해석</th></tr></thead><tbody>
             <tr><td>폐업률</td><td>${rec.cr}%</td><td>${medClose.toFixed(1)}%</td><td>${rec.cr > medClose ? '상대적으로 높음' : '상대적으로 낮음'}</td></tr>
@@ -193,7 +214,7 @@
           <article class="card scenario-result" id="scenario-result"><h2>시나리오 결과</h2><div class="status">비용과 매출 가정을 입력한 뒤 계산을 실행하세요.</div></article>
         </section>
         <section class="card coach-card"><div class="coach-header"><div><h2>근거 기반 창업 코치</h2><p class="method" style="margin:0">시장·ML 예측·시나리오 수치만 바탕으로 현장 검증과 다음 행동을 제안합니다.</p></div><button class="button secondary" id="coach-button" type="button">AI 코치 분석</button></div><div class="coach-output" id="coach-output"><div class="status">시나리오 계산 후 코치 분석을 요청하세요. Ollama 로컬 모델이 있으면 API 키 없이 GenAI 코치가 동작합니다.</div></div></section>
-        <section class="card method"><b>AI 예측 모델</b> 과거 분기의 점포·개폐업·추정매출·유동인구를 입력해 다음 분기 폐업률을 예측하는 Ridge 회귀 모델입니다. 학습 표본 ${fmt.format(dataset.meta.ai_model.training_pairs)}건 · ${aiPerformance()}. 예측 범위는 홀드아웃 평균절대오차를 적용한 참고 범위이며, 신뢰구간이나 특정 점포의 폐업 확률이 아닙니다.<br><b>현재 지수 산정 방식</b> 폐업률 상대순위 35% + 점포 밀도 상대순위 25% + 낮은 점포당 매출 25% + 최근 점포당 매출 감소 15%. 모든 순위는 선택 업종 안에서 서울 행정동끼리 계산합니다.<br><b>출처</b> ${dataset.sources.stores}, ${dataset.sources.sales}, ${dataset.sources.population}<div class="sources">데이터 행 수: ${fmt.format(dataset.meta.record_count)}개 행정동·업종 조합 / 행정동 ${dataset.meta.dong_count}개 / 비교 업종 ${dataset.meta.industry_count}개</div></section>`;
+        <section class="card method"><b>AI 예측 모델</b> 과거 분기의 점포·개폐업·추정매출·유동인구를 입력해 다음 분기 폐업률을 예측하는 Ridge 회귀 모델입니다. 학습 표본 ${fmt.format(dataset.meta.ai_model.training_pairs)}건 · ${aiPerformance()}. 예측 범위는 홀드아웃 평균절대오차를 적용한 참고 범위이며, 신뢰구간이나 특정 점포의 폐업 확률이 아닙니다.<br><b>학습 기반 리스크 지수</b> 고정 가중치 합산 대신, 과거 분기 자료로 학습한 다음 분기 폐업률 예측값을 같은 업종의 서울 행정동끼리 순위화한 0~100 점수입니다. ${riskValidation()} 아래의 현재 위험 신호는 점수 가중치가 아니라 현장 확인을 돕는 관측 지표입니다.<br><b>출처</b> ${dataset.sources.stores}, ${dataset.sources.sales}, ${dataset.sources.population}<div class="sources">데이터 행 수: ${fmt.format(dataset.meta.record_count)}개 행정동·업종 조합 / 행정동 ${dataset.meta.dong_count}개 / 비교 업종 ${dataset.meta.industry_count}개</div></section>`;
       document.querySelector('#scenario-form').addEventListener('submit', event => { event.preventDefault(); requestScenario(); });
       document.querySelector('#coach-button').addEventListener('click', requestCoach);
       document.querySelectorAll('[data-dong]').forEach(button => button.addEventListener('click', () => { state.dong=button.dataset.dong; document.querySelector('#dong').value=state.dong; render(); window.scrollTo({top:0,behavior:'smooth'}); }));

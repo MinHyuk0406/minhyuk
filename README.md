@@ -22,7 +22,7 @@ python app.py --open
 
 - 분석 기준 분기: `2026년 1분기` (`20261`)
 - 비교 단위: **같은 서비스 업종 안에서 서울 행정동 간 상대 비교**
-- 위험지수(0~100): 폐업률 상대순위 35% + 점포 밀도 상대순위 25% + 낮은 점포당 추정매출 25% + 최근 점포당 매출 감소 15%
+- 학습 기반 리스크 지수(0~100): 과거 분기로 학습한 다음 분기 폐업률 예측값을 같은 업종의 서울 행정동 안에서 순위화한 점수
 - 점포당 추정매출: 행정동·업종의 추정매출 총액 ÷ 전체 점포 수
 
 ## AI 예측 모델
@@ -32,6 +32,15 @@ python app.py --open
 - 입력: 최근 폐업·개업률, 점포 수·점포 밀도, 점포당 매출·거래건수, 매출 증감, 프랜차이즈 비중, 업종 기준선
 - 검증: 미래 분기를 학습에 섞지 않는 시간 순서 홀드아웃(`2025년 4분기 → 2026년 1분기`)으로 검증
 - 대시보드의 예측 범위: 홀드아웃 평균절대오차(MAE)를 예측값에 더하고 뺀 참고 범위
+- 리스크 지수 검증: 홀드아웃 분기에서 동일 업종 상위 25% 위험군과 하위 25% 위험군의 실제 다음 분기 폐업률을 비교
+
+## 안정성 × 시장 진입 4분면
+
+- 세로축(안정성): AI가 예측한 다음 분기 폐업률의 동일 업종 내 상대 순위
+- 가로축(시장 진입): 개업률 − 폐업률인 **순점포 증감률**의 동일 업종 내 상대 위치
+- 영역: 안정적 성장, 경쟁 치열, 성숙·안정, 수축 위험 / 틈새 검토
+
+개업률이 높아도 폐업률이 더 높을 수 있으므로, 시장 기회는 개업률만으로 판단하지 않습니다. 수축 위험 / 틈새 검토 영역은 점포당 매출이 업종 중앙값 이상이고 최근 매출 추세가 유지될 때만 틈새 검토로 표시하며, 그렇지 않으면 수축 위험으로 표시합니다.
 
 이 지수와 AI 예측은 공개 상권 통계에 기반한 사전 검토 도구입니다. 특정 가게의 폐업 확률이나 실제 폐업 원인을 예측·판정하지 않습니다. 임대료, 보증금, 점포 면적, 점주 경력, 상권별 접근성 등 미포함 요인은 계약 전 별도로 확인해야 합니다.
 
@@ -44,6 +53,24 @@ python build_dashboard.py --input-dir 'C:\Users\smho0\Downloads' --output 'data\
 ```
 
 현재 대시보드는 외부 API나 별도 패키지 없이 동작합니다.
+
+## Pandas 기반 데이터 분석
+
+발표용 전처리·분석 근거는 `pandas_analysis.py`로 재현할 수 있습니다. 이 단계는 배포용 대시보드와 분리되어 있으므로 Vercel에 Pandas를 설치할 필요가 없습니다.
+
+```powershell
+# Python에 Pandas가 없다면 한 번만 설치
+python -m pip install pandas
+
+python pandas_analysis.py --input-dir 'C:\Users\smho0\Downloads' --dashboard-data 'data\dashboard-data.json' --output-dir 'analysis'
+```
+
+실행하면 `analysis` 폴더에 다음 파일이 생성됩니다.
+
+- `data_quality_summary.csv`: 원본·결합 데이터의 행 수, 결측치, 키 중복 점검
+- `quarterly_market_summary.csv`: 분기별 개·폐업률, 순점포 증감률, 점포당 매출 요약
+- `quadrant_summary.csv`: 4분면별 점포 수와 평균 개·폐업률·매출·AI 예측 결과
+- `analysis_report.md`: 발표에 바로 활용할 수 있는 분석 과정과 핵심 수치
 
 ## 12개월 운영 시나리오
 
@@ -86,8 +113,8 @@ Gemini API를 연결하려면 실행 전 PowerShell에서 환경변수를 설정
 
 ```powershell
 $env:GEMINI_API_KEY = 'YOUR_API_KEY'
-# 선택 사항: 기본값은 gemini-2.5-flash입니다.
-$env:GEMINI_MODEL = 'gemini-2.5-flash'
+# 선택 사항: 기본값은 gemini-3.5-flash입니다.
+$env:GEMINI_MODEL = 'gemini-3.5-flash'
 python app.py --open
 ```
 
@@ -132,7 +159,7 @@ GENAI_PROVIDER=rules
 # Gemini GenAI 코치를 쓸 때
 GENAI_PROVIDER=gemini
 GEMINI_API_KEY=YOUR_API_KEY
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.5-flash
 ```
 
 Vercel에서는 사용자 PC의 Ollama에 접근할 수 없으므로 Ollama 기반 코치는 동작하지 않습니다. 배포판에서는 Gemini GenAI 코치 또는 규칙 기반 코치를 사용합니다.
