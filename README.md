@@ -62,7 +62,7 @@ python build_dashboard.py --input-dir 'C:\Users\smho0\Downloads' --output 'data\
 코치는 다음 우선순위로 동작합니다.
 
 1. 실행 중인 **Ollama 로컬 모델** — API 키 없이 GenAI 답변 생성
-2. `OPENAI_API_KEY`가 설정된 OpenAI API
+2. `GEMINI_API_KEY`가 설정된 Gemini API
 3. 외부 모델 없이 동작하는 **규칙 기반 코치**
 
 기본값은 `GENAI_PROVIDER=auto`입니다. 로컬 모델만 강제하려면 `GENAI_PROVIDER=ollama`, 규칙 기반만 쓰려면 `GENAI_PROVIDER=rules`를 설정할 수 있습니다.
@@ -80,18 +80,18 @@ python app.py --open
 
 Ollama가 기본 로컬 주소(`http://127.0.0.1:11434`)에서 실행 중이면 앱이 자동 감지합니다. 앱은 안전을 위해 `127.0.0.1`·`localhost`의 Ollama만 연결하며, 선택 상권의 집계 지표와 시나리오 값만 로컬 모델에 전달합니다. 모델이 없거나 Ollama가 실행되지 않으면 규칙 기반 코치로 자동 전환됩니다.
 
-### OpenAI API 사용
+### Gemini API 사용
 
-OpenAI API를 연결하려면 실행 전 PowerShell에서 환경변수를 설정하세요. API 키는 코드나 브라우저에 넣지 않습니다.
+Gemini API를 연결하려면 실행 전 PowerShell에서 환경변수를 설정하세요. API 키는 코드나 브라우저에 넣지 않습니다.
 
 ```powershell
-$env:OPENAI_API_KEY = 'YOUR_API_KEY'
-# 선택 사항: 기본값은 gpt-5입니다.
-$env:OPENAI_MODEL = 'gpt-5'
+$env:GEMINI_API_KEY = 'YOUR_API_KEY'
+# 선택 사항: 기본값은 gemini-2.5-flash입니다.
+$env:GEMINI_MODEL = 'gemini-2.5-flash'
 python app.py --open
 ```
 
-키가 있으면 서버가 OpenAI Responses API에 구조화된 JSON 응답을 요청해 GenAI 코치 결과를 만듭니다. 전달되는 내용은 선택 상권의 집계 지표와 사용자가 입력한 시나리오 값뿐이며, 프롬프트는 제공된 수치 밖의 사실·법률·개별 점포 성공 보장을 만들지 않도록 제한합니다. API가 실패하면 규칙 기반 코치로 되돌아갑니다.
+키가 있으면 서버가 Gemini API에 구조화된 JSON 응답을 요청해 GenAI 코치 결과를 만듭니다. 전달되는 내용은 선택 상권의 집계 지표와 사용자가 입력한 시나리오 값뿐이며, 프롬프트는 제공된 수치 밖의 사실·법률·개별 점포 성공 보장을 만들지 않도록 제한합니다. API가 실패하면 규칙 기반 코치로 되돌아갑니다.
 
 ## GitHub·Vercel 배포
 
@@ -110,7 +110,7 @@ git remote add origin https://github.com/YOUR_GITHUB_ID/open-safe-ai.git
 git push -u origin main
 ```
 
-`.gitignore`은 API 키가 들어갈 수 있는 `.env` 파일, Vercel 연결 정보, Python 캐시를 제외합니다. `OPENAI_API_KEY`는 절대로 GitHub에 커밋하지 마세요.
+`.gitignore`은 API 키가 들어갈 수 있는 `.env` 파일, Vercel 연결 정보, Python 캐시를 제외합니다. `GEMINI_API_KEY`는 절대로 GitHub에 커밋하지 마세요.
 
 ### 2. Vercel 연결
 
@@ -129,13 +129,13 @@ Vercel Project Settings → Environment Variables에 필요한 값만 설정합�
 # 외부 GenAI 없이 배포할 때
 GENAI_PROVIDER=rules
 
-# OpenAI GenAI 코치를 쓸 때
-GENAI_PROVIDER=openai
-OPENAI_API_KEY=YOUR_API_KEY
-OPENAI_MODEL=gpt-5
+# Gemini GenAI 코치를 쓸 때
+GENAI_PROVIDER=gemini
+GEMINI_API_KEY=YOUR_API_KEY
+GEMINI_MODEL=gemini-2.5-flash
 ```
 
-Vercel에서는 사용자 PC의 Ollama에 접근할 수 없으므로 Ollama 기반 코치는 동작하지 않습니다. 배포판에서는 OpenAI GenAI 코치 또는 규칙 기반 코치를 사용합니다.
+Vercel에서는 사용자 PC의 Ollama에 접근할 수 없으므로 Ollama 기반 코치는 동작하지 않습니다. 배포판에서는 Gemini GenAI 코치 또는 규칙 기반 코치를 사용합니다.
 
 ### 4. 수정 확인 흐름
 

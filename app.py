@@ -13,7 +13,7 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 
 ROOT = Path(__file__).resolve().parent
@@ -236,14 +236,13 @@ COACH_SCHEMA = {
 }
 
 
-def response_text(response: dict[str, Any]) -> str:
-    if isinstance(response.get("output_text"), str):
-        return response["output_text"]
-    for item in response.get("output", []):
-        for content in item.get("content", []):
-            if content.get("type") == "output_text" and isinstance(content.get("text"), str):
-                return content["text"]
-    raise ValueError("The model response did not contain text output.")
+def gemini_response_text(response: dict[str, Any]) -> str:
+    """Extract generated text from a Gemini generateContent response."""
+    for candidate in response.get("candidates", []):
+        for part in candidate.get("content", {}).get("parts", []):
+            if isinstance(part.get("text"), str):
+                return part["text"]
+    raise ValueError("Gemini 응답에 텍스트가 없습니다.")
 
 
 def valid_coach(payload: Any) -> bool:
@@ -316,14 +315,14 @@ def ollama_coach(context: dict[str, Any]) -> tuple[dict[str, Any] | None, str | 
         return None, f"Ollama를 사용할 수 없습니다: {type(error).__name__}"
 
 
-def openai_coach(context: dict[str, Any]) -> dict[str, Any]:
-    """Request a strictly structured interpretation without sending API keys to the browser."""
-    api_key = os.environ.get("OPENAI_API_KEY")
+def gemini_coach(context: dict[str, Any]) -> dict[str, Any]:
+    """Request a structured Gemini interpretation without exposing keys to the browser."""
+    api_key = os.environ.get("GEMINI_API_KEY")
     fallback = rule_based_coach(context)
     if not api_key:
-        fallback["notice"] = "OPENAI_API_KEY가 없어 규칙 기반 코치로 안내합니다."
+        fallback["notice"] = "GEMINI_API_KEY가 없어 규칙 기반 코치로 안내합니다."
         return fallback
-    model = os.environ.get("OPENAI_MODEL", "gpt-5")
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
     instructions = (
         "You are a cautious Korean startup-market coach. Return Korean only. "
         "Use only the supplied JSON facts and calculations. Never invent data, laws, competitors, "
@@ -331,32 +330,28 @@ def openai_coach(context: dict[str, Any]) -> dict[str, Any]:
         "survival probability. Clearly distinguish the market ML estimate from the user-input scenario."
     )
     request_body = {
-        "model": model,
-        "store": False,
-        "instructions": instructions,
-        "input": json.dumps(context, ensure_ascii=False),
-        "text": {
-            "format": {
-                "type": "json_schema",
-                "name": "startup_market_coach",
-                "strict": True,
-                "schema": COACH_SCHEMA,
-            }
+        "systemInstruction": {"parts": [{"text": instructions}]},
+        "contents": [{"role": "user", "parts": [{"text": json.dumps(context, ensure_ascii=False)}]}],
+        "generationConfig": {
+            "temperature": 0.2,
+            "responseMimeType": "application/json",
+            "responseJsonSchema": COACH_SCHEMA,
         },
     }
     request = urllib.request.Request(
-        "https://api.openai.com/v1/responses",
+        f"https://generativelanguage.googleapis.com/v1beta/models/{quote(model, safe='-._')}:generateContent?key={quote(api_key, safe='')}",
         data=json.dumps(request_body, ensure_ascii=False).encode("utf-8"),
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers={"Content-Type": "application/json"},
         method="POST",
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as result:
             parsed = json.load(result)
-        coach = json.loads(response_text(parsed))
+        coach = json.loads(gemini_response_text(parsed))
         if not valid_coach(coach):
             raise ValueError("The GenAI response did not match the expected structure.")
-        coach["source"] = "openai"
+        coach["source"] = "gemini"
+        coach["model"] = model
         return coach
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, json.JSONDecodeError) as error:
         fallback["notice"] = f"GenAI 호출을 완료하지 못해 규칙 기반 코치로 안내합니다: {type(error).__name__}"
@@ -364,14 +359,14 @@ def openai_coach(context: dict[str, Any]) -> dict[str, Any]:
 
 
 def generate_coach(context: dict[str, Any]) -> dict[str, Any]:
-    """Select local Ollama, then optional OpenAI, then the deterministic fallback."""
+    """Select local Ollama, then optional Gemini, then the deterministic fallback."""
     provider = os.environ.get("GENAI_PROVIDER", "auto").lower()
     # Vercel Functions run in a remote serverless environment, so their
     # localhost is not the visitor's PC and cannot host the user's Ollama.
     if os.environ.get("VERCEL") and provider == "auto":
-        provider = "openai" if os.environ.get("OPENAI_API_KEY") else "rules"
+        provider = "gemini" if os.environ.get("GEMINI_API_KEY") else "rules"
     fallback = rule_based_coach(context)
-    if provider not in {"auto", "ollama", "openai", "rules"}:
+    if provider not in {"auto", "ollama", "gemini", "rules"}:
         fallback["notice"] = "GENAI_PROVIDER 값이 올바르지 않아 규칙 기반 코치로 안내합니다."
         return fallback
     if provider == "rules":
@@ -384,12 +379,12 @@ def generate_coach(context: dict[str, Any]) -> dict[str, Any]:
         if provider == "ollama":
             fallback["notice"] = issue or "Ollama 로컬 모델을 사용할 수 없습니다."
             return fallback
-    if provider in {"auto", "openai"} and os.environ.get("OPENAI_API_KEY"):
-        return openai_coach(context)
-    if provider == "openai":
-        fallback["notice"] = "OPENAI_API_KEY가 없어 규칙 기반 코치로 안내합니다."
+    if provider in {"auto", "gemini"} and os.environ.get("GEMINI_API_KEY"):
+        return gemini_coach(context)
+    if provider == "gemini":
+        fallback["notice"] = "GEMINI_API_KEY가 없어 규칙 기반 코치로 안내합니다."
     else:
-        fallback["notice"] = "Ollama 로컬 모델과 OpenAI API 키가 없어 규칙 기반 코치로 안내합니다."
+        fallback["notice"] = "Ollama 로컬 모델과 Gemini API 키가 없어 규칙 기반 코치로 안내합니다."
     return fallback
 
 

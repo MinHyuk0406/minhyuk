@@ -124,7 +124,7 @@
       const evidence=data.evidence.map(item=>`<li><b>${esc(item.label)}: ${esc(item.value)}</b><br>${esc(item.interpretation)}</li>`).join('');
       const priorities=data.priorities.map(item=>`<div class="coach-priority"><b>${esc(item.title)}</b><p>${esc(item.why)}</p><p><strong>실행:</strong> ${esc(item.action)}</p></div>`).join('');
       const checks=data.field_checks.map(item=>`<li>${esc(item)}</li>`).join('');
-      const source=data.source === 'ollama' ? `로컬 GenAI 코치 · ${esc(data.model || 'Ollama')}` : data.source === 'openai' ? 'OpenAI GenAI 코치' : '규칙 기반 코치';
+      const source=data.source === 'ollama' ? `로컬 GenAI 코치 · ${esc(data.model || 'Ollama')}` : data.source === 'gemini' ? `Gemini GenAI 코치 · ${esc(data.model || 'Gemini')}` : '규칙 기반 코치';
       const notice=data.notice ? `<p class="status">${esc(data.notice)}</p>` : '';
       return `<div class="status">${source}</div><p class="coach-summary">${esc(data.summary)}</p><p class="coach-decision">${esc(data.decision)}</p>${notice}<div class="coach-groups"><div><h3>근거</h3><ul class="coach-list">${evidence}</ul><h3>현장 확인</h3><ul class="coach-list">${checks}</ul></div><div><h3>우선 실행</h3>${priorities}</div></div><p class="scenario-note">${esc(data.caution)}</p>`;
     }
