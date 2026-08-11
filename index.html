@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenSafe AI | 서울 창업 리스크 진단</title>
+  <style>
+    :root { --ink:#172033; --muted:#61708a; --line:#e5e9f1; --paper:#f6f8fb; --card:#ffffff; --navy:#18355f; --blue:#2d6cdf; --sky:#eaf2ff; --green:#17845f; --green-bg:#e7f6ef; --orange:#bd6600; --orange-bg:#fff2de; --red:#bd3c50; --red-bg:#fcecef; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--paper); color:var(--ink); font-family:"Pretendard","Noto Sans KR","Malgun Gothic",Arial,sans-serif; line-height:1.5; }
+    header { background:var(--navy); color:#fff; padding:30px max(24px, calc((100% - 1180px)/2)); }
+    .brand { font-size:13px; letter-spacing:.09em; font-weight:700; color:#bbd6ff; text-transform:uppercase; }
+    h1 { font-size:28px; line-height:1.25; margin:5px 0 6px; letter-spacing:-.04em; }
+    .subtitle { margin:0; color:#d7e5fa; font-size:14px; }
+    main { max-width:1180px; margin:0 auto; padding:26px 24px 50px; }
+    .controls { display:grid; grid-template-columns:1fr 1fr auto; gap:14px; align-items:end; background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; box-shadow:0 2px 12px rgba(23,32,51,.04); }
+    label { display:block; font-size:12px; color:var(--muted); font-weight:700; margin-bottom:6px; }
+    select { width:100%; background:#fff; border:1px solid #cfd7e5; border-radius:8px; color:var(--ink); font:inherit; padding:10px 12px; }
+    .quarter { padding:10px 4px; font-size:13px; color:var(--muted); white-space:nowrap; }
+    .notice { margin:18px 0; color:var(--muted); font-size:13px; }
+    .summary { display:grid; grid-template-columns:1.35fr 1.15fr repeat(3, 1fr); gap:14px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; min-width:0; }
+    .metric-label { color:var(--muted); font-size:12px; font-weight:700; }
+    .metric { margin-top:4px; font-size:26px; line-height:1.25; font-weight:750; letter-spacing:-.04em; font-variant-numeric:tabular-nums; }
+    .metric-sub { margin-top:6px; color:var(--muted); font-size:12px; }
+    .risk-card { display:flex; justify-content:space-between; align-items:center; gap:14px; border-left:5px solid var(--blue); }
+    .risk-card.high { border-left-color:var(--red); } .risk-card.caution { border-left-color:var(--orange); } .risk-card.stable { border-left-color:var(--green); }
+    .risk-score { text-align:right; white-space:nowrap; } .risk-score b { display:block; font-size:34px; letter-spacing:-.05em; } .risk-score span { font-size:12px; color:var(--muted); }
+    .ai-card { border-top:4px solid var(--blue); }.ai-card.high { border-top-color:var(--red); }.ai-card.caution { border-top-color:var(--orange); }.ai-card.stable { border-top-color:var(--green); }
+    .ai-forecast { margin:16px 0 0; padding:12px 13px; border-radius:9px; background:#f4f7fc; color:#29384f; font-size:13px; }.ai-forecast strong { color:var(--navy); }.signal-list { display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }.signal { border:1px solid var(--line); border-radius:99px; padding:3px 8px; color:var(--muted); font-size:11px; }.signal.up { background:var(--red-bg); border-color:#f4d4da; color:var(--red); }.signal.down { background:var(--green-bg); border-color:#ccebdc; color:var(--green); }
+    .grid { display:grid; grid-template-columns:1.1fr .9fr; gap:14px; margin-top:14px; }
+    h2 { font-size:16px; margin:0 0 14px; letter-spacing:-.025em; }
+    h3 { font-size:14px; margin:18px 0 10px; }
+    .insight { margin:0; font-size:14px; color:#2a3850; }
+    .rank-note { margin-top:13px; padding-top:13px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+    .factor { display:grid; grid-template-columns:116px 1fr 38px; align-items:center; gap:9px; margin:11px 0; font-size:12px; }
+    .track { height:8px; background:#edf1f6; border-radius:99px; overflow:hidden; }.fill { height:100%; background:var(--blue); border-radius:99px; }.fill.warn { background:var(--orange); }.fill.high { background:var(--red); }.fill.good { background:var(--green); }
+    .factor strong { text-align:right; font-variant-numeric:tabular-nums; }
+    .chart-wrap { height:248px; } .chart-wrap svg { width:100%; height:100%; overflow:visible; }
+    .axis { stroke:#d5dce7; stroke-width:1; }.chart-path { fill:none; stroke:var(--blue); stroke-width:3; stroke-linecap:round; stroke-linejoin:round; }.chart-dot { fill:var(--blue); }.chart-label { fill:var(--muted); font-size:11px; }
+    .table-wrap { overflow-x:auto; } table { width:100%; border-collapse:collapse; font-size:13px; } th,td { padding:11px 8px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; } th:first-child,td:first-child { text-align:left; } th { color:var(--muted); font-size:12px; font-weight:700; } td { font-variant-numeric:tabular-nums; }
+    .alternatives { display:grid; gap:9px; }.alternative { width:100%; border:1px solid var(--line); background:#fff; text-align:left; padding:13px; border-radius:10px; cursor:pointer; color:var(--ink); font:inherit; display:grid; grid-template-columns:1fr auto; gap:10px; }.alternative:hover { border-color:#9db8e6; background:#f9fbff; }.alt-name { font-weight:750; }.alt-detail { color:var(--muted); font-size:12px; margin-top:3px; }.alt-score { text-align:right; font-size:12px; color:var(--muted); }.alt-score b { display:block; font-size:20px; color:var(--green); }
+    .method { margin-top:14px; color:var(--muted); font-size:12px; }.method b { color:var(--ink); }.sources { margin-top:7px; font-size:11px; color:#8090a9; word-break:break-all; }
+    .scenario-form { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }.scenario-form input { width:100%; background:#fff; border:1px solid #cfd7e5; border-radius:8px; color:var(--ink); font:inherit; padding:10px 12px; }.scenario-form .form-span { grid-column:1 / -1; }.button { border:0; border-radius:8px; background:var(--navy); color:#fff; cursor:pointer; font:inherit; font-weight:700; padding:11px 14px; }.button:hover { background:#244a82; }.button:disabled { background:#9ba7b9; cursor:wait; }.button.secondary { background:#eaf2ff; color:var(--navy); }.scenario-result { min-height:250px; }.scenario-score { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; padding-bottom:14px; border-bottom:1px solid var(--line); }.scenario-score b { display:block; font-size:31px; letter-spacing:-.05em; }.mini-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:14px; }.mini-metric { border-left:3px solid var(--blue); background:#f7f9fc; padding:9px 10px; }.mini-metric span { display:block; color:var(--muted); font-size:11px; }.mini-metric strong { display:block; margin-top:2px; font-size:16px; letter-spacing:-.02em; font-variant-numeric:tabular-nums; }.scenario-note { margin:13px 0 0; color:var(--muted); font-size:12px; }.coach-card { margin-top:14px; }.coach-header { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }.coach-output { min-height:112px; }.coach-summary { margin:0 0 10px; color:#26364f; font-size:14px; }.coach-decision { margin:0; color:var(--muted); font-size:13px; }.coach-groups { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px; }.coach-list { padding-left:18px; margin:8px 0 0; color:#37465f; font-size:13px; }.coach-list li { margin:6px 0; }.coach-priority { padding:10px 0; border-top:1px solid var(--line); }.coach-priority:first-child { border-top:0; padding-top:0; }.coach-priority b { font-size:13px; }.coach-priority p { margin:3px 0 0; color:var(--muted); font-size:12px; }.status { color:var(--muted); font-size:12px; }.error { color:var(--red); font-size:13px; }
+    .pill { display:inline-block; border-radius:99px; padding:2px 8px; margin-left:5px; font-size:11px; font-weight:700; }.pill.high { color:var(--red); background:var(--red-bg); }.pill.caution { color:var(--orange); background:var(--orange-bg); }.pill.stable { color:var(--green); background:var(--green-bg); }.pill.interest { color:var(--blue); background:var(--sky); }
+    .empty { padding:36px 10px; text-align:center; color:var(--muted); }
+    @media (max-width:780px) { h1 { font-size:24px; }.controls,.summary,.grid,.scenario-form,.coach-groups { grid-template-columns:1fr; }.quarter { padding:0 4px; }.summary { gap:10px; }.grid { gap:10px; }.card { padding:16px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">OpenSafe AI</div>
+    <h1>서울 창업 리스크 진단</h1>
+    <p class="subtitle">과거 분기를 학습한 AI 예측과 폐업·경쟁·매출·유동인구 비교로, 창업 전 검토할 상권을 보여드립니다.</p>
+  </header>
+  <main>
+    <section class="controls" aria-label="상권 선택">
+      <div><label for="industry">희망 업종</label><select id="industry"></select></div>
+      <div><label for="dong">검토 행정동</label><select id="dong"></select></div>
+      <div id="quarter" class="quarter"></div>
+    </section>
+    <p class="notice">이 도구는 행정동 단위의 공개 상권 통계를 활용한 상대 비교입니다. 특정 점포의 폐업 확률이나 폐업 원인을 단정하지 않습니다.</p>
+    <div id="app"><div class="empty">데이터를 불러오는 중입니다…</div></div>
+  </main>
+  <script>
+    const fmt = new Intl.NumberFormat('ko-KR');
+    const won = n => `${fmt.format(Math.round(n / 10000))}만 원`;
+    const count = n => `${fmt.format(n)}개`;
+    const pct = n => n === null || n === undefined ? '비교 불가' : `${n > 0 ? '+' : ''}${n.toFixed(1)}%`;
+    const mw = n => `${fmt.format(Math.round(n))}만 원`;
+    const esc = value => String(value).replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
+    const median = values => { const a = [...values].sort((x,y)=>x-y); const m = Math.floor(a.length/2); return a.length % 2 ? a[m] : (a[m-1]+a[m])/2; };
+    const keyClass = label => label === '높음' ? 'high' : label === '주의' ? 'caution' : label === '안정' ? 'stable' : 'interest';
+    let dataset, state = {};
+
+    function currentRows() { return dataset.records.filter(r => r.ic === state.industry); }
+    function selected() { return currentRows().find(r => r.dc === state.dong); }
+    function fillIndustry() {
+      const select = document.querySelector('#industry');
+      select.innerHTML = dataset.industries.map(x => `<option value="${x.code}">${x.name} (${x.count}개 행정동)</option>`).join('');
+      const preferred = dataset.industries.find(x => x.name.includes('커피')) || dataset.industries[0];
+      state.industry = preferred.code; select.value = state.industry;
+    }
+    function fillDong(preferred) {
+      const select = document.querySelector('#dong');
+      const rows = currentRows().sort((a,b)=>a.d.localeCompare(b.d,'ko'));
+      const available = new Map(rows.map(r=>[r.dc,r.d]));
+      select.innerHTML = [...available].map(([code,name]) => `<option value="${code}">${name}</option>`).join('');
+      state.dong = available.has(preferred) ? preferred : rows[0].dc;
+      select.value = state.dong;
+    }
+    function strongest(rec) {
+      const labels = ['폐업 부담','점포 밀도','매출/점포 부족','최근 매출 감소'];
+      const index = rec.x.indexOf(Math.max(...rec.x));
+      return labels[index];
+    }
+    function factorRows(rec) {
+      const labels = ['폐업 부담','점포 밀도','매출/점포 부족','최근 매출 감소'];
+      return labels.map((label,i) => {
+        const cls = rec.x[i] >= 75 ? 'high' : rec.x[i] >= 60 ? 'warn' : rec.x[i] < 35 ? 'good' : '';
+        return `<div class="factor"><span>${label}</span><div class="track"><div class="fill ${cls}" style="width:${rec.x[i]}%"></div></div><strong>${rec.x[i]}</strong></div>`;
+      }).join('');
+    }
+    function aiSignals(rec) {
+      const labels = dataset.meta.ai_model.feature_labels;
+      return rec.mi.map(([index,direction]) => `<span class="signal ${direction}">${direction === 'up' ? '예측 상향' : '예측 완화'} · ${labels[index]}</span>`).join('');
+    }
+    function aiPerformance() {
+      const ai = dataset.meta.ai_model;
+      const diff = (ai.baseline_mae - ai.holdout_mae).toFixed(2);
+      const comparison = Number(diff) > 0 ? `기준선보다 ${diff}%p 낮음` : `기준선보다 ${Math.abs(diff).toFixed(2)}%p 높음`;
+      return `시간 순서 홀드아웃(${ai.holdout_feature_quarter} → ${ai.holdout_target_quarter}) MAE ${ai.holdout_mae}%p · 현재 폐업률 기준선 대비 ${comparison}`;
+    }
+    function scenarioForm() {
+      return `<form id="scenario-form" class="scenario-form"><div><label for="rent">월 임대료 (만 원)</label><input id="rent" name="rent_manwon" type="number" min="0" max="20000" value="250" required></div><div><label for="fixed">기타 월 고정비 (만 원)</label><input id="fixed" name="other_fixed_manwon" type="number" min="0" max="20000" value="350" required></div><div><label for="variable">변동비율 (%)</label><input id="variable" name="variable_cost_rate" type="number" min="1" max="95" value="35" required></div><div><label for="basket">예상 객단가 (원)</label><input id="basket" name="basket_won" type="number" min="1000" max="1000000" value="9000" required></div><div><label for="days">월 영업일</label><input id="days" name="operating_days" type="number" min="1" max="31" value="26" required></div><div><label for="adjustment">매출 가정 조정 (%)</label><input id="adjustment" name="sales_adjustment" type="number" min="-50" max="50" value="0" required></div><div><label for="budget">초기 운영예산 (만 원)</label><input id="budget" name="startup_budget_manwon" type="number" min="0" max="500000" value="8000" required></div><div class="form-span"><button class="button" type="submit">12개월 운영 시나리오 계산</button></div></form>`;
+    }
+    function scenarioResult(data) {
+      const s=data.scenario, r=data.resilience;
+      const runway=s.runway_months === null ? '월 흑자 가정' : `${s.runway_months.toFixed(1)}개월`;
+      const profitClass=s.monthly_profit_manwon >= 0 ? 'stable' : 'high';
+      return `<div class="scenario-score"><div><div class="metric-label">12개월 운영 여력 <span class="pill ${r.score >= 60 ? 'stable' : r.score >= 40 ? 'interest' : 'high'}">${esc(r.label)}</span></div><b>${r.score}<span style="font-size:13px;font-weight:400"> / 100</span></b></div><div class="text-end"><div class="metric-label">시나리오 월 손익</div><div class="metric ${profitClass}">${mw(s.monthly_profit_manwon)}</div></div></div><div class="mini-grid"><div class="mini-metric"><span>예상 월매출</span><strong>${mw(s.monthly_revenue_manwon)}</strong></div><div class="mini-metric"><span>손익분기 월매출</span><strong>${mw(s.break_even_revenue_manwon)}</strong></div><div class="mini-metric"><span>필요 일평균 거래</span><strong>${s.transactions_per_day.toFixed(1)}건</strong></div><div class="mini-metric"><span>적자 시 예산 여력</span><strong>${runway}</strong></div></div><p class="scenario-note">${esc(data.disclaimer)}</p>`;
+    }
+    function coachResult(data) {
+      const evidence=data.evidence.map(item=>`<li><b>${esc(item.label)}: ${esc(item.value)}</b><br>${esc(item.interpretation)}</li>`).join('');
+      const priorities=data.priorities.map(item=>`<div class="coach-priority"><b>${esc(item.title)}</b><p>${esc(item.why)}</p><p><strong>실행:</strong> ${esc(item.action)}</p></div>`).join('');
+      const checks=data.field_checks.map(item=>`<li>${esc(item)}</li>`).join('');
+      const source=data.source === 'ollama' ? `로컬 GenAI 코치 · ${esc(data.model || 'Ollama')}` : data.source === 'openai' ? 'OpenAI GenAI 코치' : '규칙 기반 코치';
+      const notice=data.notice ? `<p class="status">${esc(data.notice)}</p>` : '';
+      return `<div class="status">${source}</div><p class="coach-summary">${esc(data.summary)}</p><p class="coach-decision">${esc(data.decision)}</p>${notice}<div class="coach-groups"><div><h3>근거</h3><ul class="coach-list">${evidence}</ul><h3>현장 확인</h3><ul class="coach-list">${checks}</ul></div><div><h3>우선 실행</h3>${priorities}</div></div><p class="scenario-note">${esc(data.caution)}</p>`;
+    }
+    function requestBody() {
+      const form=document.querySelector('#scenario-form');
+      const values=Object.fromEntries(new FormData(form).entries());
+      return {dong_code:state.dong,industry_code:state.industry,...values};
+    }
+    async function requestScenario() {
+      const result=document.querySelector('#scenario-result'); const coach=document.querySelector('#coach-output');
+      result.innerHTML='<div class="status">시나리오를 계산하는 중입니다…</div>'; coach.innerHTML='<div class="status">시나리오 계산 후 코치 분석을 요청할 수 있습니다.</div>';
+      try { const response=await fetch('/api/scenario',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(requestBody())}); const data=await response.json(); if(!response.ok) throw new Error(data.error || '분석 오류'); state.scenario=data; result.innerHTML=scenarioResult(data); }
+      catch(error) { result.innerHTML=`<div class="error">${esc(error.message)}</div>`; }
+    }
+    async function requestCoach() {
+      const output=document.querySelector('#coach-output'); output.innerHTML='<div class="status">근거 기반 창업 코치가 분석 중입니다…</div>';
+      try { const response=await fetch('/api/coach',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(requestBody())}); const data=await response.json(); if(!response.ok) throw new Error(data.error || '코치 분석 오류'); output.innerHTML=coachResult(data); }
+      catch(error) { output.innerHTML=`<div class="error">${esc(error.message)}</div>`; }
+    }
+    function chart(history) {
+      if (!history || history.length < 2) return '<div class="empty">분기별 추세를 비교할 데이터가 충분하지 않습니다.</div>';
+      const width=560, height=220, left=58, right=16, top=22, bottom=38;
+      const values=history.map(x=>x[1]); const low=Math.min(...values), high=Math.max(...values); const gap=Math.max((high-low)*.15, high*.04, 1); const min=low-gap, max=high+gap;
+      const x=i=>left+i*(width-left-right)/(history.length-1); const y=v=>top+(max-v)*(height-top-bottom)/(max-min);
+      const points=history.map((p,i)=>`${x(i)},${y(p[1])}`).join(' ');
+      const guides=[min,(min+max)/2,max].map(v=>`<line class="axis" x1="${left}" x2="${width-right}" y1="${y(v)}" y2="${y(v)}"/><text class="chart-label" x="0" y="${y(v)+4}">${won(v)}</text>`).join('');
+      const labels=history.map((p,i)=>`<text class="chart-label" text-anchor="middle" x="${x(i)}" y="${height-12}">${p[0].slice(0,4)} Q${p[0].slice(4)}</text>`).join('');
+      const dots=history.map((p,i)=>`<circle class="chart-dot" cx="${x(i)}" cy="${y(p[1])}" r="4"><title>${p[0]}: 점포당 ${won(p[1])}</title></circle>`).join('');
+      return `<div class="chart-wrap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="분기별 점포당 추정매출 추이"><title>분기별 점포당 추정매출</title>${guides}<line class="axis" x1="${left}" x2="${width-right}" y1="${height-bottom}" y2="${height-bottom}"/><polyline class="chart-path" points="${points}"/>${dots}${labels}</svg></div>`;
+    }
+    function alternatives(rec, rows, medSales, medStores) {
+      const options = rows.filter(r => r.dc !== rec.dc && r.s >= Math.max(3, Math.floor(medStores*.25)) && r.ss >= medSales*.55).sort((a,b)=>a.r-b.r).slice(0,3);
+      if (!options.length) return '<p class="empty">추천할 비교 상권이 충분하지 않습니다.</p>';
+      return options.map(x => `<button class="alternative" data-dong="${x.dc}" type="button"><span><span class="alt-name">${x.d}</span><span class="alt-detail">폐업률 ${x.cr}% · 점포당 ${won(x.ss)}</span></span><span class="alt-score">위험지수<b>${x.r}</b></span></button>`).join('');
+    }
+    function render() {
+      const rec = selected(); const rows = currentRows();
+      if (!rec) { document.querySelector('#app').innerHTML='<div class="empty">선택한 조건의 매출 데이터가 없습니다.</div>'; return; }
+      const medSales=median(rows.map(r=>r.ss)), medFlow=median(rows.map(r=>r.ps)), medClose=median(rows.map(r=>r.cr)), medStores=median(rows.map(r=>r.s));
+      const highRank=Math.max(1, Math.round(rows.filter(r=>r.r >= rec.r).length/rows.length*100));
+      const summary = `동일 업종 ${rows.length}개 행정동 중 위험도 상위 ${highRank}%입니다. 가장 크게 확인할 신호는 <b>${strongest(rec)}</b>입니다.`;
+      document.querySelector('#quarter').textContent=`분석 기준: ${dataset.meta.latest_quarter.slice(0,4)}년 ${dataset.meta.latest_quarter.slice(4)}분기`;
+      document.querySelector('#app').innerHTML = `
+        <section class="summary" aria-label="핵심 지표">
+          <article class="card risk-card ${keyClass(rec.rl)}"><div><div class="metric-label">현재 상권 리스크 지수 <span class="pill ${keyClass(rec.rl)}">${rec.rl}</span></div><div class="metric-sub">폐업·경쟁·수요·매출 추세를 동일 업종과 비교</div></div><div class="risk-score"><b>${rec.r}</b><span>100점 기준</span></div></article>
+          <article class="card ai-card ${keyClass(rec.ml)}"><div class="metric-label">AI 다음 분기 폐업률 예측 <span class="pill ${keyClass(rec.ml)}">${rec.ml}</span></div><div class="metric">${rec.mp.toFixed(1)}%</div><div class="metric-sub">검증 오차 기준 범위 ${rec.mlow.toFixed(1)}% ~ ${rec.mhigh.toFixed(1)}%</div></article>
+          <article class="card"><div class="metric-label">폐업률 / 폐업점포</div><div class="metric">${rec.cr}% <span style="font-size:16px">· ${count(rec.c)}</span></div><div class="metric-sub">동일 업종 중앙값 ${medClose.toFixed(1)}%</div></article>
+          <article class="card"><div class="metric-label">점포당 추정매출</div><div class="metric">${won(rec.ss)}</div><div class="metric-sub">동일 업종 중앙값 ${won(medSales)}</div></article>
+          <article class="card"><div class="metric-label">점포당 분기 유동인구</div><div class="metric">${fmt.format(rec.ps)}</div><div class="metric-sub">동일 업종 중앙값 ${fmt.format(medFlow)}</div></article>
+        </section>
+        <section class="grid">
+          <article class="card"><h2>${rec.d} · ${rec.i} 진단</h2><p class="insight">${summary}</p><div class="rank-note">최근 개업 ${count(rec.o)} · 전체 점포 ${count(rec.s)} · 프랜차이즈 ${count(rec.f)} · 직전 분기 대비 점포당 매출 ${pct(rec.g)}</div><div class="ai-forecast"><strong>AI 예측</strong> · ${dataset.meta.ai_model.forecast_quarter.slice(0,4)}년 ${dataset.meta.ai_model.forecast_quarter.slice(4)}분기 예상 폐업률은 <strong>${rec.mp.toFixed(1)}%</strong>이며, 동일 업종 내 예측 위험도 상위 ${Math.max(1,100-rec.mr)}%입니다.<div class="signal-list">${aiSignals(rec)}</div></div><h3>현재 위험 신호의 상대 위치</h3>${factorRows(rec)}</article>
+          <article class="card"><h2>점포당 추정매출 추이</h2>${chart(rec.h)}<p class="method">매출 총액을 해당 업종의 전체 점포 수로 나눈 값입니다. 매출이 없는 공개 항목은 비교 대상에서 제외될 수 있습니다.</p></article>
+        </section>
+        <section class="grid">
+          <article class="card"><h2>동일 업종 비교</h2><div class="table-wrap"><table><thead><tr><th>지표</th><th>선택 상권</th><th>동일 업종 중앙값</th><th>해석</th></tr></thead><tbody>
+            <tr><td>폐업률</td><td>${rec.cr}%</td><td>${medClose.toFixed(1)}%</td><td>${rec.cr > medClose ? '상대적으로 높음' : '상대적으로 낮음'}</td></tr>
+            <tr><td>점포 수</td><td>${count(rec.s)}</td><td>${count(medStores)}</td><td>${rec.s > medStores ? '경쟁 규모 큼' : '경쟁 규모 작음'}</td></tr>
+            <tr><td>점포당 추정매출</td><td>${won(rec.ss)}</td><td>${won(medSales)}</td><td>${rec.ss >= medSales ? '수요 여력 양호' : '수요 여력 확인 필요'}</td></tr>
+            <tr><td>점포당 유동인구</td><td>${fmt.format(rec.ps)}</td><td>${fmt.format(medFlow)}</td><td>${rec.ps >= medFlow ? '유동 수요 양호' : '유동 수요 확인 필요'}</td></tr>
+          </tbody></table></div></article>
+          <article class="card"><h2>대안 상권 제안</h2><p class="method" style="margin-top:-8px;margin-bottom:12px">같은 업종에서 낮은 위험지수와 최소 수요 조건을 만족하는 행정동입니다.</p><div class="alternatives">${alternatives(rec, rows, medSales, medStores)}</div></article>
+        </section>
+        <section class="grid">
+          <article class="card"><h2>12개월 운영 시나리오</h2><p class="method" style="margin-top:-8px">선택 상권의 점포당 추정매출을 출발점으로, 비용·매출 가정에 따른 손익분기와 운영 여력을 계산합니다.</p>${scenarioForm()}</article>
+          <article class="card scenario-result" id="scenario-result"><h2>시나리오 결과</h2><div class="status">비용과 매출 가정을 입력한 뒤 계산을 실행하세요.</div></article>
+        </section>
+        <section class="card coach-card"><div class="coach-header"><div><h2>근거 기반 창업 코치</h2><p class="method" style="margin:0">시장·ML 예측·시나리오 수치만 바탕으로 현장 검증과 다음 행동을 제안합니다.</p></div><button class="button secondary" id="coach-button" type="button">AI 코치 분석</button></div><div class="coach-output" id="coach-output"><div class="status">시나리오 계산 후 코치 분석을 요청하세요. Ollama 로컬 모델이 있으면 API 키 없이 GenAI 코치가 동작합니다.</div></div></section>
+        <section class="card method"><b>AI 예측 모델</b> 과거 분기의 점포·개폐업·추정매출·유동인구를 입력해 다음 분기 폐업률을 예측하는 Ridge 회귀 모델입니다. 학습 표본 ${fmt.format(dataset.meta.ai_model.training_pairs)}건 · ${aiPerformance()}. 예측 범위는 홀드아웃 평균절대오차를 적용한 참고 범위이며, 신뢰구간이나 특정 점포의 폐업 확률이 아닙니다.<br><b>현재 지수 산정 방식</b> 폐업률 상대순위 35% + 점포 밀도 상대순위 25% + 낮은 점포당 매출 25% + 최근 점포당 매출 감소 15%. 모든 순위는 선택 업종 안에서 서울 행정동끼리 계산합니다.<br><b>출처</b> ${dataset.sources.stores}, ${dataset.sources.sales}, ${dataset.sources.population}<div class="sources">데이터 행 수: ${fmt.format(dataset.meta.record_count)}개 행정동·업종 조합 / 행정동 ${dataset.meta.dong_count}개 / 비교 업종 ${dataset.meta.industry_count}개</div></section>`;
+      document.querySelector('#scenario-form').addEventListener('submit', event => { event.preventDefault(); requestScenario(); });
+      document.querySelector('#coach-button').addEventListener('click', requestCoach);
+      document.querySelectorAll('[data-dong]').forEach(button => button.addEventListener('click', () => { state.dong=button.dataset.dong; document.querySelector('#dong').value=state.dong; render(); window.scrollTo({top:0,behavior:'smooth'}); }));
+    }
+    fetch('data/dashboard-data.json').then(r => { if (!r.ok) throw new Error('data'); return r.json(); }).then(data => { dataset=data; fillIndustry(); fillDong(); render(); document.querySelector('#industry').addEventListener('change', e => { state.industry=e.target.value; fillDong(); render(); }); document.querySelector('#dong').addEventListener('change', e => { state.dong=e.target.value; render(); }); }).catch(() => { document.querySelector('#app').innerHTML='<div class="empty">데이터를 불러오지 못했습니다. README의 실행 방법대로 로컬 서버를 시작해 주세요.</div>'; });
+  </script>
+</body>
+</html>
