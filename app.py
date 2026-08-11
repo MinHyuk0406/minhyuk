@@ -351,7 +351,7 @@ def gemini_coach(context: dict[str, Any]) -> dict[str, Any]:
     if not api_key:
         fallback["notice"] = "GEMINI_API_KEY가 없어 규칙 기반 코치로 안내합니다."
         return fallback
-    model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+    model = configured_model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")    model = "gemini-3.5-flash" if configured_model == "gemini-2.5-flash" else configured_model
     instructions = (
         "You are a cautious Korean startup-market coach. Return Korean only. "
         "Use only the supplied JSON facts and calculations. Never invent data, laws, competitors, "
