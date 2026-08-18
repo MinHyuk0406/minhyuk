@@ -78,6 +78,36 @@ def quality_rows(frames: dict[str, pd.DataFrame], merged: pd.DataFrame) -> pd.Da
     return pd.DataFrame(rows)
 
 
+def quality_checks(frames: dict[str, pd.DataFrame], merged: pd.DataFrame) -> pd.DataFrame:
+    """Create fail-visible data contracts for reruns with future CSV files."""
+    stores, sales, population = frames["stores"], frames["sales"], frames["population"]
+    checks = [
+        ("source_store_key_unique", int(stores.duplicated(KEYS, keep=False).sum()), "분기·행정동·업종 키 중복 없음", "error"),
+        ("source_sales_key_unique", int(sales.duplicated(KEYS, keep=False).sum()), "분기·행정동·업종 키 중복 없음", "error"),
+        ("merged_key_unique", int(merged.duplicated(KEYS, keep=False).sum()), "결합 후 키 중복 없음", "error"),
+        ("non_negative_store_count", int(stores["store_count"].lt(0).sum()), "점포 수는 0 이상", "error"),
+        ("non_negative_sales_and_transactions", int((sales["sales_won"].lt(0) | sales["transactions"].lt(0)).sum()), "매출·거래 건수는 0 이상", "error"),
+        ("open_close_rate_non_negative", int((stores["open_rate"].lt(0) | stores["close_rate"].lt(0)).sum()), "개·폐업률은 0 이상", "error"),
+        ("open_close_rate_above_100", int((stores["open_rate"].gt(100) | stores["close_rate"].gt(100)).sum()), "소규모 분모로 100% 초과 가능 — 경고로 추적", "warning"),
+        ("franchise_not_above_store", int(stores["franchise_count"].gt(stores["store_count"]).sum()), "프랜차이즈 점포 수는 전체 점포 수 이하", "error"),
+        ("non_negative_population", int(population["floating_population"].lt(0).sum()), "유동인구는 0 이상", "error"),
+    ]
+    result = pd.DataFrame(checks, columns=["check", "failure_rows", "rule", "severity"])
+    result["status"] = np.where(
+        result["failure_rows"].eq(0), "passed",
+        np.where(result["severity"].eq("warning"), "warning", "failed"),
+    )
+    return result
+
+
+def enforce_quality(checks: pd.DataFrame) -> None:
+    """Stop publication if a source rerun violates a core data contract."""
+    failed = checks.loc[checks["status"].eq("failed")]
+    if not failed.empty:
+        detail = ", ".join(f"{row.check}={row.failure_rows}" for row in failed.itertuples())
+        raise ValueError(f"Data quality checks failed: {detail}")
+
+
 def build_merged(frames: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """Join store, sales, and population data and add presentation variables."""
     stores, sales, population = frames["stores"], frames["sales"], frames["population"]
@@ -231,8 +261,27 @@ def dashboard_quadrant_summary(dashboard_path: Path) -> pd.DataFrame:
     return summary
 
 
+def dashboard_validation_outputs(dashboard_path: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Flatten model-comparison, industry-error, and score-sensitivity metadata."""
+    payload = json.loads(dashboard_path.read_text(encoding="utf-8"))
+    ai_model = payload["meta"]["ai_model"]
+    rows = []
+    for model, metrics in ai_model["model_comparison"].items():
+        rows.append({"evaluation": "final_holdout", "model": model, **metrics})
+    for model, metrics in ai_model["rolling_validation"]["summary"].items():
+        rows.append({"evaluation": "rolling_origin_mean", "model": model, **metrics})
+    validation = pd.DataFrame(rows)
+    industry = pd.DataFrame(ai_model["holdout_by_industry"])
+    sensitivity = pd.DataFrame([
+        {"profile": name, **values}
+        for name, values in payload["meta"]["startup_fit"]["sensitivity"]["profiles"].items()
+    ])
+    return validation, industry, sensitivity
+
+
 def write_report(output_dir: Path, sources: dict[str, Path], quality: pd.DataFrame,
-                 quarterly: pd.DataFrame, quadrants: pd.DataFrame) -> None:
+                 quarterly: pd.DataFrame, quadrants: pd.DataFrame, checks: pd.DataFrame,
+                 validation: pd.DataFrame, sensitivity: pd.DataFrame) -> None:
     """Write concise Korean notes that can be used directly in a presentation."""
     merged_row = quality.loc[quality["dataset"].eq("merged_analysis_base")].iloc[0]
     lines = [
@@ -250,12 +299,38 @@ def write_report(output_dir: Path, sources: dict[str, Path], quality: pd.DataFra
         f"- 결합 후 분석 가능 행: {int(merged_row['rows']):,}건",
         f"- 결합 후 키 중복 행: {int(merged_row['duplicate_key_rows']):,}건",
         f"- 분석 기준 분기 수: {quarterly['quarter'].nunique():,}개",
+        f"- 자동 데이터 품질 검사: {int(checks['status'].eq('passed').sum())}개 통과 · {int(checks['status'].eq('warning').sum())}개 경고 · {int(checks['status'].eq('failed').sum())}개 실패",
+        "",
+        "## 모델 검증",
+        "",
+        "| 평가 방식 | 모델 | MAE | RMSE |",
+        "|---|---|---:|---:|",
+    ]
+    for _, row in validation.iterrows():
+        mae = row["mae"] if pd.notna(row.get("mae")) else row["mean_mae"]
+        rmse = row["rmse"] if pd.notna(row.get("rmse")) else row["mean_rmse"]
+        lines.append(f"| {row['evaluation']} | {row['model']} | {mae:.2f} | {rmse:.2f} |")
+    lines.extend([
+        "",
+        "## 적합도 가중치 민감도",
+        "",
+        "| 프로필 | 평균 순위 변화 | 상위 25% 후보 중복률 |",
+        "|---|---:|---:|",
+    ])
+    for _, row in sensitivity.iterrows():
+        lines.append(
+            f"| {row['profile']} | {row['mean_absolute_rank_change']:.2f}점 | "
+            f"{row['mean_top_quartile_overlap_percent']:.1f}% |"
+        )
+    lines.extend([
+        "",
+        "적합도 민감도는 가중치를 바꿨을 때 후보 상권의 동일 업종 내 상대 순위가 얼마나 달라지는지 보여주는 검증이며, 성공 확률의 검증이 아닙니다.",
         "",
         "## 4분면 요약",
         "",
         "| 구분 | 행정동·업종 조합 수 | 평균 현재 폐업률 | 평균 개업률 | 평균 순점포 증감률 | 평균 AI 다음 분기 폐업률 |",
         "|---|---:|---:|---:|---:|---:|",
-    ]
+    ])
     for _, row in quadrants.iterrows():
         lines.append(
             f"| {row['ql']} | {int(row['행정동업종_조합수']):,} | {row['평균_현재_폐업률']:.2f}% | "
@@ -282,6 +357,8 @@ def main() -> None:
     sources, frames = load_source_frames(args.input_dir)
     merged = build_merged(frames)
     quality = quality_rows(frames, merged)
+    checks = quality_checks(frames, merged)
+    enforce_quality(checks)
     quarterly = (
         merged.groupby("quarter", as_index=False)
         .agg(
@@ -294,15 +371,20 @@ def main() -> None:
         .sort_values("quarter")
     )
     quadrants = dashboard_quadrant_summary(args.dashboard_data)
+    validation, industry_metrics, sensitivity = dashboard_validation_outputs(args.dashboard_data)
     panel = modeling_panel(merged)
     feature_summary, selection_protocol = feature_selection_summary(panel)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     quality.to_csv(args.output_dir / "data_quality_summary.csv", index=False, encoding="utf-8-sig")
+    checks.to_csv(args.output_dir / "data_quality_checks.csv", index=False, encoding="utf-8-sig")
     quarterly.to_csv(args.output_dir / "quarterly_market_summary.csv", index=False, encoding="utf-8-sig")
     quadrants.to_csv(args.output_dir / "quadrant_summary.csv", index=False, encoding="utf-8-sig")
     feature_summary.to_csv(args.output_dir / "feature_selection_summary.csv", index=False, encoding="utf-8-sig")
-    write_report(args.output_dir, sources, quality, quarterly, quadrants)
+    validation.to_csv(args.output_dir / "model_validation_summary.csv", index=False, encoding="utf-8-sig")
+    industry_metrics.to_csv(args.output_dir / "industry_holdout_metrics.csv", index=False, encoding="utf-8-sig")
+    sensitivity.to_csv(args.output_dir / "startup_fit_sensitivity.csv", index=False, encoding="utf-8-sig")
+    write_report(args.output_dir, sources, quality, quarterly, quadrants, checks, validation, sensitivity)
     write_modeling_report(args.output_dir, feature_summary, selection_protocol)
     print(
         f"Pandas analysis complete: {len(merged):,} merged rows, "

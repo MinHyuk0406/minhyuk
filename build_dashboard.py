@@ -190,9 +190,14 @@ def fit_ridge(rows: list[dict], industry_codes: list[str], alpha: float) -> dict
         category[index, category_index[row["ic"]]] = 1.0
     design = np.column_stack([np.ones(len(rows)), standardized, category])
     target = np.asarray([row["target"] for row in rows], dtype=float)
-    penalty = np.eye(design.shape[1]) * alpha
-    penalty[0, 0] = 0.0  # Never penalize the intercept.
-    weights = np.linalg.solve(design.T @ design + penalty, design.T @ target)
+    if alpha <= 0:
+        # Ordinary least squares is kept as an interpretable comparison model.
+        # lstsq remains stable even when one-hot industry columns are collinear.
+        weights = np.linalg.lstsq(design, target, rcond=None)[0]
+    else:
+        penalty = np.eye(design.shape[1]) * alpha
+        penalty[0, 0] = 0.0  # Never penalize the intercept.
+        weights = np.linalg.solve(design.T @ design + penalty, design.T @ target)
     return {
         "weights": weights,
         "means": means,
@@ -225,6 +230,182 @@ def mean_absolute_error(predicted: np.ndarray, actual: np.ndarray) -> float:
 
 def root_mean_squared_error(predicted: np.ndarray, actual: np.ndarray) -> float:
     return float(np.sqrt(np.mean((predicted - actual) ** 2)))
+
+
+def choose_ridge_alpha(train_rows: list[dict], validation_rows: list[dict],
+                       industry_codes: list[str]) -> tuple[float, float]:
+    """Tune Ridge only on periods prior to the evaluation period."""
+    candidates = [1.0, 10.0, 30.0, 100.0, 300.0]
+    actual = np.asarray([row["target"] for row in validation_rows], dtype=float)
+    scores = []
+    for alpha in candidates:
+        model = fit_ridge(train_rows, industry_codes, alpha)
+        scores.append((mean_absolute_error(ridge_predict(model, validation_rows), actual), alpha))
+    score, alpha = min(scores)
+    return alpha, score
+
+
+def by_industry_metrics(rows: list[dict], predicted: np.ndarray, actual: np.ndarray) -> list[dict]:
+    """Expose holdout error by industry without hiding weak categories."""
+    grouped: dict[str, list[int]] = defaultdict(list)
+    for index, row in enumerate(rows):
+        grouped[row["ic"]].append(index)
+    metrics = []
+    for code, indexes in grouped.items():
+        subset_predicted = predicted[indexes]
+        subset_actual = actual[indexes]
+        metrics.append({
+            "industry_code": code,
+            "industry": rows[indexes[0]]["i"],
+            "samples": len(indexes),
+            "mae": round(mean_absolute_error(subset_predicted, subset_actual), 2),
+            "rmse": round(root_mean_squared_error(subset_predicted, subset_actual), 2),
+        })
+    return sorted(metrics, key=lambda item: (-item["mae"], item["industry_code"]))
+
+
+def rolling_time_validation(pairs_by_quarter: dict[str, list[dict]], source_quarters: list[str],
+                            industry_codes: list[str]) -> dict:
+    """Evaluate the same prediction task across several future quarters.
+
+    Each fold tunes Ridge using only earlier quarters, then compares it with
+    current-closure-rate and unregularized linear-regression baselines.
+    """
+    folds, model_scores = [], defaultdict(list)
+    # One initial training period plus one tuning period is sufficient for the
+    # earliest fold; later periods remain strictly unseen until evaluated.
+    for test_index in range(2, len(source_quarters)):
+        train_quarters = source_quarters[:test_index]
+        validation_quarter = train_quarters[-1]
+        tuning_train = [row for quarter in train_quarters[:-1] for row in pairs_by_quarter[quarter]]
+        validation_rows = pairs_by_quarter[validation_quarter]
+        selected_alpha, tuning_mae = choose_ridge_alpha(tuning_train, validation_rows, industry_codes)
+        train_rows = [row for quarter in train_quarters for row in pairs_by_quarter[quarter]]
+        test_quarter = source_quarters[test_index]
+        test_rows = pairs_by_quarter[test_quarter]
+        actual = np.asarray([row["target"] for row in test_rows], dtype=float)
+        ridge_model = fit_ridge(train_rows, industry_codes, selected_alpha)
+        linear_model = fit_ridge(train_rows, industry_codes, 0.0)
+        predictions = {
+            "current_close_rate": np.asarray([row["cr"] for row in test_rows], dtype=float),
+            "linear_regression": ridge_predict(linear_model, test_rows),
+            "ridge_regression": ridge_predict(ridge_model, test_rows),
+        }
+        fold = {
+            "feature_quarters": train_quarters,
+            "target_quarter": next_quarter_code(test_quarter),
+            "evaluation_feature_quarter": test_quarter,
+            "samples": len(test_rows),
+            "selected_alpha": selected_alpha,
+            "tuning_mae": round(tuning_mae, 2),
+            "models": {},
+        }
+        for name, predicted in predictions.items():
+            mae = mean_absolute_error(predicted, actual)
+            rmse = root_mean_squared_error(predicted, actual)
+            fold["models"][name] = {"mae": round(mae, 2), "rmse": round(rmse, 2)}
+            model_scores[name].append((mae, rmse))
+        folds.append(fold)
+    summary = {}
+    for name, scores in model_scores.items():
+        maes = np.asarray([score[0] for score in scores], dtype=float)
+        rmses = np.asarray([score[1] for score in scores], dtype=float)
+        summary[name] = {
+            "folds": len(scores),
+            "mean_mae": round(float(maes.mean()), 2),
+            "mae_std": round(float(maes.std()), 2),
+            "mean_rmse": round(float(rmses.mean()), 2),
+        }
+    return {"method": "rolling_origin_time_validation", "folds": folds, "summary": summary}
+
+
+def validate_source_values(population: dict[tuple[str, str], int],
+                           stores: dict[tuple[str, str, str], dict],
+                           sales: dict[tuple[str, str, str], dict]) -> dict:
+    """Apply fail-fast data contracts before modelling or publishing results."""
+    issues = []
+    invalid_population = sum(value < 0 for value in population.values())
+    invalid_sales = sum(item["sales"] < 0 or item["transactions"] < 0 for item in sales.values())
+    invalid_store_count = sum(item["stores"] < 0 or item["franchise"] < 0 for item in stores.values())
+    invalid_rates = sum(item["open_rate"] < 0 or item["close_rate"] < 0 for item in stores.values())
+    high_rates = sum(item["open_rate"] > 100 or item["close_rate"] > 100 for item in stores.values())
+    invalid_franchise = sum(item["franchise"] > item["stores"] for item in stores.values())
+    checks = {
+        "non_negative_population": invalid_population,
+        "non_negative_sales_and_transactions": invalid_sales,
+        "non_negative_store_counts": invalid_store_count,
+        "open_and_close_rate_non_negative": invalid_rates,
+        "franchise_count_not_above_store_count": invalid_franchise,
+    }
+    for name, failures in checks.items():
+        if failures:
+            issues.append(f"{name}: {failures}")
+    if issues:
+        raise RuntimeError("Source data quality validation failed: " + "; ".join(issues))
+    status_checks = {name: "passed" for name in checks}
+    # A rate can exceed 100 when the denominator is a very small prior-period
+    # store base. It is informative, so retain it as an explicit warning.
+    status_checks["open_or_close_rate_above_100"] = "warning" if high_rates else "passed"
+    return {
+        "status": "passed",
+        "population_rows": len(population),
+        "store_rows": len(stores),
+        "sales_rows": len(sales),
+        "checks": status_checks,
+        "warnings": {"open_or_close_rate_above_100": high_rates},
+    }
+
+
+def startup_fit_sensitivity(industry_records: list[dict]) -> dict:
+    """Measure whether alternative transparent weights alter relative ranks.
+
+    The score remains a decision-support index, but this report makes the
+    impact of reasonable stakeholder preference changes visible.
+    """
+    profiles = {
+        "baseline": {"stability": 0.30, "revenue_capacity": 0.25, "competition_balance": 0.20, "market_momentum": 0.15, "demand_capacity": 0.10},
+        "stability_first": {"stability": 0.45, "revenue_capacity": 0.20, "competition_balance": 0.15, "market_momentum": 0.10, "demand_capacity": 0.10},
+        "growth_first": {"stability": 0.20, "revenue_capacity": 0.30, "competition_balance": 0.15, "market_momentum": 0.25, "demand_capacity": 0.10},
+    }
+    profile_scores = {
+        name: [sum(record["fc"][factor] * weight for factor, weight in weights.items()) for record in industry_records]
+        for name, weights in profiles.items()
+    }
+    baseline_ranks = percentile_ranks(profile_scores["baseline"])
+    rows = []
+    for name, scores in profile_scores.items():
+        ranks = percentile_ranks(scores)
+        rank_change = [abs(current - base) * 100 for current, base in zip(ranks, baseline_ranks)]
+        baseline_top = {index for index, rank in enumerate(baseline_ranks) if rank >= 0.75}
+        profile_top = {index for index, rank in enumerate(ranks) if rank >= 0.75}
+        overlap = len(baseline_top & profile_top) / max(len(baseline_top | profile_top), 1) * 100
+        rows.append({
+            "profile": name,
+            "weights": profiles[name],
+            "mean_absolute_rank_change": round(float(np.mean(rank_change)), 2),
+            "top_quartile_overlap_percent": round(overlap, 1),
+        })
+    return {"industry_code": industry_records[0]["ic"], "industry": industry_records[0]["i"], "profiles": rows}
+
+
+def summarize_fit_sensitivity(results: list[dict]) -> dict:
+    profile_rows: dict[str, list[dict]] = defaultdict(list)
+    for result in results:
+        for profile in result["profiles"]:
+            profile_rows[profile["profile"]].append(profile)
+    profiles = {}
+    for name, rows in profile_rows.items():
+        profiles[name] = {
+            "weights": rows[0]["weights"],
+            "industry_count": len(rows),
+            "mean_absolute_rank_change": round(float(np.mean([row["mean_absolute_rank_change"] for row in rows])), 2),
+            "mean_top_quartile_overlap_percent": round(float(np.mean([row["top_quartile_overlap_percent"] for row in rows])), 1),
+        }
+    return {
+        "method": "same_industry_weight_sensitivity",
+        "profiles": profiles,
+        "interpretation": "가중치 프로필을 바꿨을 때 동일 업종 내 후보 순위가 얼마나 달라지는지 측정한 민감도 분석",
+    }
 
 
 def risk_ranking_validation(rows: list[dict], predicted: np.ndarray, actual: np.ndarray) -> dict:
@@ -276,22 +457,18 @@ def train_ai_model(pairs_by_quarter: dict[str, list[dict]], source_quarters: lis
     tune_train = [row for quarter in tune_train_quarters for row in pairs_by_quarter[quarter]]
     tune_validation = pairs_by_quarter[tune_validation_quarter]
 
-    candidates = [1.0, 10.0, 30.0, 100.0, 300.0]
-    candidate_scores = []
-    for alpha in candidates:
-        candidate_model = fit_ridge(tune_train, industries, alpha)
-        validation_predictions = ridge_predict(candidate_model, tune_validation)
-        validation_actual = np.asarray([row["target"] for row in tune_validation], dtype=float)
-        candidate_scores.append((mean_absolute_error(validation_predictions, validation_actual), alpha))
-    selected_alpha = min(candidate_scores)[1]
+    selected_alpha, tuning_mae = choose_ridge_alpha(tune_train, tune_validation, industries)
 
     test_train = [row for quarter in source_quarters[:-1] for row in pairs_by_quarter[quarter]]
     test_rows = pairs_by_quarter[test_quarter]
     evaluation_model = fit_ridge(test_train, industries, selected_alpha)
+    linear_evaluation_model = fit_ridge(test_train, industries, 0.0)
     test_predictions = ridge_predict(evaluation_model, test_rows)
+    linear_predictions = ridge_predict(linear_evaluation_model, test_rows)
     test_actual = np.asarray([row["target"] for row in test_rows], dtype=float)
     baseline_predictions = np.asarray([row["cr"] for row in test_rows], dtype=float)
     risk_validation = risk_ranking_validation(test_rows, test_predictions, test_actual)
+    rolling_validation = rolling_time_validation(pairs_by_quarter, source_quarters, industries)
 
     final_train = [row for quarter in source_quarters for row in pairs_by_quarter[quarter]]
     final_model = fit_ridge(final_train, industries, selected_alpha)
@@ -316,7 +493,23 @@ def train_ai_model(pairs_by_quarter: dict[str, list[dict]], source_quarters: lis
         "holdout_mae": round(holdout_mae, 2),
         "holdout_rmse": round(root_mean_squared_error(test_predictions, test_actual), 2),
         "baseline_mae": round(mean_absolute_error(baseline_predictions, test_actual), 2),
-        "tuning_mae": round(min(candidate_scores)[0], 2),
+        "tuning_mae": round(tuning_mae, 2),
+        "model_comparison": {
+            "current_close_rate": {
+                "mae": round(mean_absolute_error(baseline_predictions, test_actual), 2),
+                "rmse": round(root_mean_squared_error(baseline_predictions, test_actual), 2),
+            },
+            "linear_regression": {
+                "mae": round(mean_absolute_error(linear_predictions, test_actual), 2),
+                "rmse": round(root_mean_squared_error(linear_predictions, test_actual), 2),
+            },
+            "ridge_regression": {
+                "mae": round(holdout_mae, 2),
+                "rmse": round(root_mean_squared_error(test_predictions, test_actual), 2),
+            },
+        },
+        "holdout_by_industry": by_industry_metrics(test_rows, test_predictions, test_actual),
+        "rolling_validation": rolling_validation,
         "feature_labels": FEATURE_LABELS,
         "risk_index": {
             "method": "same_industry_rank_of_ml_predicted_next_quarter_close_rate",
@@ -336,6 +529,7 @@ def main() -> None:
     population = read_population(sources["population"])
     stores = read_stores(sources["stores"])
     sales = read_sales(sources["sales"])
+    source_quality = validate_source_values(population, stores, sales)
 
     quarters = sorted({key[0] for key in stores} & {key[0] for key in sales} & {key[0] for key in population})
     if not quarters:
@@ -420,6 +614,7 @@ def main() -> None:
     for record in records:
         by_industry[record["ic"]].append(record)
 
+    sensitivity_results = []
     for industry_records in by_industry.values():
         close_p = percentile_ranks([record["cr"] for record in industry_records])
         density_p = percentile_ranks([record["s"] * 1_000_000 / max(record["p"], 1) for record in industry_records])
@@ -475,6 +670,8 @@ def main() -> None:
             record["fs"] = round(fit)
             record["fl"] = "높음" if fit >= 70 else "보통" if fit >= 45 else "낮음"
 
+        sensitivity_results.append(startup_fit_sensitivity(industry_records))
+
         # The opportunity axis uses net entry rather than openings alone: a
         # place where openings are high but closures are even higher is not
         # automatically a growth market.  Both axes remain same-industry
@@ -520,6 +717,7 @@ def main() -> None:
             "dong_count": len(dongs),
             "industry_count": len(industries),
             "method": "same-industry empirical ranking",
+            "data_quality": source_quality,
             "ai_model": ai_metrics,
             "startup_fit": {
                 "method": "same_industry_weighted_startup_fit",
@@ -531,6 +729,7 @@ def main() -> None:
                     "demand_capacity": 0.10,
                 },
                 "caution": "relative decision support score; not a success guarantee or causal estimate",
+                "sensitivity": summarize_fit_sensitivity(sensitivity_results),
             },
         },
         "industries": industries,

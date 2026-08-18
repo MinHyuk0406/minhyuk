@@ -115,6 +115,17 @@
       const comparison = Number(diff) > 0 ? `기준선보다 ${diff}%p 낮음` : `기준선보다 ${Math.abs(diff).toFixed(2)}%p 높음`;
       return `시간 순서 홀드아웃(${ai.holdout_feature_quarter} → ${ai.holdout_target_quarter}) MAE ${ai.holdout_mae}%p · 현재 폐업률 기준선 대비 ${comparison}`;
     }
+    function rollingPerformance() {
+      const summary = dataset.meta.ai_model.rolling_validation?.summary?.ridge_regression;
+      if (!summary) return '롤링 검증 결과는 데이터 재생성 후 표시됩니다.';
+      return `롤링 시간 검증 ${summary.folds}회 평균 MAE ${summary.mean_mae}%p (분기별 표준편차 ${summary.mae_std}%p)`;
+    }
+    function sensitivitySummary() {
+      const profiles = dataset.meta.startup_fit?.sensitivity?.profiles;
+      const stability = profiles?.stability_first, growth = profiles?.growth_first;
+      if (!stability || !growth) return '가중치 민감도 결과는 데이터 재생성 후 표시됩니다.';
+      return `안정성 우선·성장 우선 가중치에서도 상위 25% 후보 중복률은 각각 ${stability.mean_top_quartile_overlap_percent}%·${growth.mean_top_quartile_overlap_percent}%입니다.`;
+    }
     function riskValidation() {
       const validation = dataset.meta.ai_model.risk_index?.validation;
       if (validation?.gap_percentage_points === null || validation?.gap_percentage_points === undefined) return '홀드아웃 표본에서 위험 순위의 차이를 계산하지 못했습니다.';
@@ -283,7 +294,7 @@
           <article class="card scenario-result" id="scenario-result"><h2>시나리오 결과</h2><div class="status">비용과 매출 가정을 입력한 뒤 계산을 실행하세요.</div></article>
         </section>
         <section class="card coach-card"><div class="coach-header"><div><h2>근거 기반 창업 코치</h2><p class="method" style="margin:0">적합도·시장 신호·시나리오 수치만 바탕으로 현장 검증과 다음 행동을 제안합니다.</p></div><button class="button secondary" id="coach-button" type="button">AI 코치 분석</button></div><div class="coach-output" id="coach-output"><div class="status">시나리오 계산 후 코치 분석을 요청하세요.</div></div></section>
-        <section class="card method"><b>창업 적합도</b> 단기 안정성 30% · 수익 여력 25% · 경쟁 균형 20% · 시장 방향 15% · 수요 여력 10%를 같은 업종 안에서 상대 비교한 점수입니다. 각 축은 공개 상권 데이터를 정규화해 반영하며, 단일 폐업률로 창업 위험을 단정하지 않습니다.<br><b>AI 단기 안정성</b> 과거 분기의 점포·개폐업·추정매출·유동인구를 입력해 Ridge 회귀 모델이 다음 분기 폐업률을 예측한 뒤, 같은 업종 내 상대 순위로 반영합니다. 학습 표본 ${fmt.format(dataset.meta.ai_model.training_pairs)}건 · ${aiPerformance()}.<br><b>출처</b> ${dataset.sources.stores}, ${dataset.sources.sales}, ${dataset.sources.population}<div class="sources">데이터 행 수: ${fmt.format(dataset.meta.record_count)}개 행정동·업종 조합 / 행정동 ${dataset.meta.dong_count}개 / 비교 업종 ${dataset.meta.industry_count}개</div></section>`;
+        <section class="card method"><b>창업 적합도</b> 단기 안정성 30% · 수익 여력 25% · 경쟁 균형 20% · 시장 방향 15% · 수요 여력 10%를 같은 업종 안에서 상대 비교한 점수입니다. 각 축은 공개 상권 데이터를 정규화해 반영하며, 단일 폐업률로 창업 위험을 단정하지 않습니다. ${sensitivitySummary()}<br><b>AI 단기 안정성</b> 과거 분기의 점포·개폐업·추정매출·유동인구를 입력해 Ridge 회귀 모델이 다음 분기 폐업률을 예측한 뒤, 같은 업종 내 상대 순위로 반영합니다. 학습 표본 ${fmt.format(dataset.meta.ai_model.training_pairs)}건 · ${aiPerformance()} · ${rollingPerformance()}.<br><b>출처</b> ${dataset.sources.stores}, ${dataset.sources.sales}, ${dataset.sources.population}<div class="sources">데이터 행 수: ${fmt.format(dataset.meta.record_count)}개 행정동·업종 조합 / 행정동 ${dataset.meta.dong_count}개 / 비교 업종 ${dataset.meta.industry_count}개</div></section>`;
       document.querySelector('#scenario-form').addEventListener('submit', event => { event.preventDefault(); requestScenario(); });
       document.querySelector('#coach-button').addEventListener('click', requestCoach);
       document.querySelectorAll('[data-dong]').forEach(button => button.addEventListener('click', () => { state.dong=button.dataset.dong; document.querySelector('#dong').value=state.dong; render(); window.scrollTo({top:0,behavior:'smooth'}); }));

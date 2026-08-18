@@ -276,8 +276,8 @@ def rule_based_coach(context: dict[str, Any]) -> dict[str, Any]:
         "evidence": [
             {"label": "AI 다음 분기 폐업률", "value": f"{market['ai_next_close_rate']}%", "interpretation": "행정동·업종 단위의 다음 분기 상대 위험 신호입니다."},
             {"label": "4분면 시장 위치", "value": market["market_position"]["quadrant"], "interpretation": market["market_position"]["interpretation"]},
-            {"label": "점포당 분기 추정매출", "value": f"{market['sales_per_store_quarterly_won'] / 10_000:,.0f}만 원", "interpretation": "동일 업종 행정동 평균과 비교하는 시장 수요 참고값입니다."},
-            {"label": "시나리오 월 손익", "value": f"{scenario['monthly_profit_manwon']:,}만 원", "interpretation": "사용자가 입력한 비용·매출 가정으로 계산한 결과입니다."},
+            {"label": "창업 적합도", "value": f"{market['startup_fit']}점({market['startup_fit_label']})", "interpretation": "AI 단기 안정성과 수익·경쟁·시장·수요 신호를 함께 비교한 상대 점수입니다."},
+            {"label": "기본 시나리오 월 손익", "value": f"{scenario['monthly_profit_manwon']:,}만 원", "interpretation": "사용자가 입력한 비용·매출 가정으로 계산한 결과입니다."},
         ],
         "priorities": priorities[:3],
         "field_checks": checks[:4],
@@ -363,12 +363,48 @@ def gemini_error_notice(error: Exception) -> str:
     return "Gemini API 응답이 예상한 코치 형식과 다릅니다. 모델과 응답 스키마를 확인하세요."
 
 
+ALLOWED_EVIDENCE_LABELS = {
+    "AI 다음 분기 폐업률",
+    "창업 적합도",
+    "4분면 시장 위치",
+    "기본 시나리오 월 손익",
+    "4분면 보수 시나리오 월 손익",
+}
+FORBIDDEN_COACH_PHRASES = ("보장", "확정", "반드시 성공", "성공 확률", "개별 폐업 확률")
+
+
+def safe_coach_text(value: Any, maximum: int = 420) -> bool:
+    """Reject unsupported certainty claims and overly long model output."""
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and len(value) <= maximum
+        and not any(phrase in value for phrase in FORBIDDEN_COACH_PHRASES)
+    )
+
+
 def valid_coach(payload: Any) -> bool:
+    """Validate both JSON shape and grounding-oriented response constraints."""
     if not isinstance(payload, dict):
         return False
-    if not all(isinstance(payload.get(name), str) for name in ["summary", "decision", "caution"]):
+    if not all(safe_coach_text(payload.get(name)) for name in ["summary", "decision", "caution"]):
         return False
-    return all(isinstance(payload.get(name), list) for name in ["evidence", "priorities", "field_checks"])
+    evidence, priorities, checks = payload.get("evidence"), payload.get("priorities"), payload.get("field_checks")
+    if not (isinstance(evidence, list) and 2 <= len(evidence) <= 5):
+        return False
+    if not (isinstance(priorities, list) and 1 <= len(priorities) <= 3):
+        return False
+    if not (isinstance(checks, list) and 2 <= len(checks) <= 5):
+        return False
+    for item in evidence:
+        if not isinstance(item, dict) or item.get("label") not in ALLOWED_EVIDENCE_LABELS:
+            return False
+        if not safe_coach_text(item.get("value"), 100) or not safe_coach_text(item.get("interpretation"), 240):
+            return False
+    for item in priorities:
+        if not isinstance(item, dict) or not all(safe_coach_text(item.get(name), 240) for name in ["title", "why", "action"]):
+            return False
+    return all(safe_coach_text(item, 240) for item in checks)
 
 
 def ollama_host() -> str:
@@ -405,7 +441,11 @@ def ollama_coach(context: dict[str, Any]) -> tuple[dict[str, Any] | None, str | 
             "You are a cautious Korean startup-market coach. Return Korean only. "
             "Use only supplied JSON facts and calculations. Never invent data, laws, competitors, "
             "or individual-store outcomes. Do not claim a guarantee or individual survival probability. "
-            "Distinguish the market ML estimate from the user-input scenario."
+            "Distinguish the market ML estimate from the user-input scenario. "
+            "Use only these evidence labels: AI 다음 분기 폐업률, 창업 적합도, 4분면 시장 위치, "
+            "기본 시나리오 월 손익, 4분면 보수 시나리오 월 손익. "
+            "Do not use the words 보장, 확정, 성공 확률, or 개별 폐업 확률. "
+            "Give 2 to 5 grounded evidence items, 1 to 3 priorities, and 2 to 5 field checks."
         )
         request_body = {
             "model": model,
@@ -449,7 +489,11 @@ def gemini_coach(context: dict[str, Any]) -> dict[str, Any]:
         "You are a cautious Korean startup-market coach. Return Korean only. "
         "Use only the supplied JSON facts and calculations. Never invent data, laws, competitors, "
         "or claims about an individual store. Do not call the result a guarantee or an individual "
-        "survival probability. Clearly distinguish the market ML estimate from the user-input scenario."
+        "survival probability. Clearly distinguish the market ML estimate from the user-input scenario. "
+        "Use only these evidence labels: AI 다음 분기 폐업률, 창업 적합도, 4분면 시장 위치, "
+        "기본 시나리오 월 손익, 4분면 보수 시나리오 월 손익. "
+        "Never use 보장, 확정, 성공 확률, or 개별 폐업 확률. "
+        "Give 2 to 5 grounded evidence items, 1 to 3 priorities, and 2 to 5 field checks."
     )
     request_body = {
         "systemInstruction": {"parts": [{"text": instructions}]},
