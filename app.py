@@ -64,6 +64,48 @@ def find_record(dong_code: str, industry_code: str) -> tuple[dict[str, Any], lis
     return record, industry_rows
 
 
+def quadrant_context(record: dict[str, Any]) -> dict[str, Any]:
+    """Turn the market-position quadrant into an explicit scenario assumption.
+
+    The adjustment is deliberately a downside *stress test*, not a sales forecast.
+    It prevents a strong average-sales figure from being interpreted as equally
+    reliable in every market position.
+    """
+    contexts = {
+        "stable_growth": {
+            "title": "안정적 성장",
+            "stress_sales_adjustment": -5,
+            "interpretation": "안정성과 순점포 증가가 함께 나타납니다. 성장 기대보다 초기 수요 검증을 우선합니다.",
+            "check": "평일·주말과 시간대별 실제 고객 수가 평균 수요를 뒷받침하는지 확인하세요.",
+        },
+        "mature_stable": {
+            "title": "성숙·안정",
+            "stress_sales_adjustment": -7,
+            "interpretation": "단기 안정성은 양호하지만 점포 순증은 크지 않습니다. 반복 수요와 차별화가 중요합니다.",
+            "check": "재방문 고객 비중과 기존 경쟁점의 가격·메뉴 구성을 확인하세요.",
+        },
+        "red_ocean": {
+            "title": "경쟁 과열",
+            "stress_sales_adjustment": -15,
+            "interpretation": "시장 진입은 활발하지만 단기 폐업 위험도 높습니다. 평균 매출만으로 계약을 판단하면 안 됩니다.",
+            "check": "동종 점포의 할인·배달·영업시간 경쟁과 차별화 비용을 현장에서 확인하세요.",
+        },
+        "niche_candidate": {
+            "title": "틈새 검토",
+            "stress_sales_adjustment": -12,
+            "interpretation": "폐업 위험 신호는 있으나 매출·추세가 일부 방어됩니다. 제한된 조건에서만 검토할 후보입니다.",
+            "check": "해당 수요가 일시적 유행인지, 반복 구매로 이어지는지 직접 관찰하세요.",
+        },
+        "contraction_risk": {
+            "title": "수축 위험",
+            "stress_sales_adjustment": -20,
+            "interpretation": "안정성과 시장 진입 신호가 모두 약합니다. 비용 조건이 매우 보수적일 때만 검토합니다.",
+            "check": "권리금·보증금·철거비를 포함해 철수 가능 비용까지 계약 전에 산정하세요.",
+        },
+    }
+    return contexts.get(record.get("q"), contexts["contraction_risk"])
+
+
 def scenario_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Calculate an auditable operating scenario from market data and user inputs.
 
@@ -81,6 +123,7 @@ def scenario_payload(payload: dict[str, Any]) -> dict[str, Any]:
     operating_days = number(payload, "operating_days", 26, 1, 31)
     sales_adjustment = number(payload, "sales_adjustment", 0, -50, 50)
     startup_budget = number(payload, "startup_budget_manwon", 8_000, 0, 500_000)
+    initial_investment = number(payload, "initial_investment_manwon", 15_000, 0, 1_000_000)
 
     base_monthly_revenue = record["ss"] / 3 / 10_000
     monthly_revenue = base_monthly_revenue * (1 + sales_adjustment / 100)
@@ -90,11 +133,28 @@ def scenario_payload(payload: dict[str, Any]) -> dict[str, Any]:
     monthly_profit = gross_profit - fixed_cost
     break_even_revenue = fixed_cost / contribution_margin
     transactions_per_day = monthly_revenue * 10_000 / basket_won / operating_days
+    break_even_transactions_per_day = break_even_revenue * 10_000 / basket_won / operating_days
     runway_months = None if monthly_profit >= 0 else startup_budget / abs(monthly_profit)
+    required_revenue_change = (break_even_revenue / monthly_revenue - 1) * 100 if monthly_revenue else 0
+    annual_operating_profit = monthly_profit * 12
+    investment_payback_months = None if monthly_profit <= 0 else initial_investment / monthly_profit
+
+    quadrant = quadrant_context(record)
+    stress_adjustment = clamp(
+        sales_adjustment + quadrant["stress_sales_adjustment"], -50, 50
+    )
+    stress_monthly_revenue = base_monthly_revenue * (1 + stress_adjustment / 100)
+    stress_monthly_profit = stress_monthly_revenue * contribution_margin - fixed_cost
+    stress_runway_months = (
+        None if stress_monthly_profit >= 0 else startup_budget / abs(stress_monthly_profit)
+    )
 
     median_sales_per_store = median([row["ss"] for row in industry_rows])
-    market_score = 100 - record["mr"]
-    demand_score = clamp((record["ss"] / median_sales_per_store) * 50, 0, 100)
+    # The scenario uses the same multi-factor startup-fit score shown in the
+    # recommendation UI, rather than treating the closure-risk rank as the
+    # whole market assessment.
+    market_score = record["fs"]
+    demand_score = record["fc"]["demand_capacity"]
     profit_score = clamp(50 + monthly_profit / max(fixed_cost, 1) * 120, 0, 100)
     runway_score = 100 if monthly_profit >= 0 else clamp((runway_months or 0) / 12 * 100, 0, 100)
     resilience = round(0.50 * profit_score + 0.20 * market_score + 0.20 * demand_score + 0.10 * runway_score)
@@ -103,6 +163,9 @@ def scenario_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "market": {
             "dong": record["d"],
             "industry": record["i"],
+            "startup_fit": record["fs"],
+            "startup_fit_label": record["fl"],
+            "startup_fit_components": record["fc"],
             "current_risk": record["r"],
             "current_risk_label": record["rl"],
             "ai_next_close_rate": record["mp"],
@@ -113,6 +176,11 @@ def scenario_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "median_sales_per_store_quarterly_won": round(median_sales_per_store),
             "close_rate": record["cr"],
             "store_count": record["s"],
+            "market_position": {
+                "quadrant": quadrant["title"],
+                "interpretation": quadrant["interpretation"],
+                "field_check": quadrant["check"],
+            },
         },
         "inputs": {
             "rent_manwon": rent,
@@ -122,6 +190,7 @@ def scenario_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "operating_days": operating_days,
             "sales_adjustment": sales_adjustment,
             "startup_budget_manwon": startup_budget,
+            "initial_investment_manwon": initial_investment,
         },
         "scenario": {
             "base_monthly_revenue_manwon": round(base_monthly_revenue),
@@ -131,7 +200,25 @@ def scenario_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "monthly_profit_manwon": round(monthly_profit),
             "break_even_revenue_manwon": round(break_even_revenue),
             "transactions_per_day": round(transactions_per_day, 1),
+            "break_even_transactions_per_day": round(break_even_transactions_per_day, 1),
             "runway_months": None if runway_months is None else round(runway_months, 1),
+            "required_revenue_change_percent": round(required_revenue_change, 1),
+            "annual_operating_profit_manwon": round(annual_operating_profit),
+            "investment_payback_months": (
+                None if investment_payback_months is None else round(investment_payback_months, 1)
+            ),
+            "market_stress": {
+                "quadrant": quadrant["title"],
+                "sales_adjustment_percent": round(stress_adjustment, 1),
+                "additional_stress_percent": quadrant["stress_sales_adjustment"],
+                "monthly_revenue_manwon": round(stress_monthly_revenue),
+                "monthly_profit_manwon": round(stress_monthly_profit),
+                "runway_months": (
+                    None if stress_runway_months is None else round(stress_runway_months, 1)
+                ),
+                "interpretation": quadrant["interpretation"],
+                "field_check": quadrant["check"],
+            },
         },
         "resilience": {
             "score": resilience,
@@ -143,7 +230,7 @@ def scenario_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 "financial_cushion": round(runway_score),
             },
         },
-        "disclaimer": "이는 행정동·업종 평균 매출과 사용자가 입력한 가정으로 계산한 손익 시나리오입니다. 개별 점포의 실제 매출·생존을 예측하거나 보장하지 않습니다.",
+        "disclaimer": "이는 행정동·업종 평균 매출과 사용자가 입력한 가정으로 계산한 손익 시나리오입니다. 4분면 보수 시나리오는 시장 위치에 따른 스트레스 테스트이며, 개별 점포의 실제 매출·생존을 예측하거나 보장하지 않습니다.",
     }
 
 
@@ -181,12 +268,14 @@ def rule_based_coach(context: dict[str, Any]) -> dict[str, Any]:
         checks.append("보수 매출 시나리오가 임대료·인건비를 감당하는지 확인하세요.")
     else:
         checks.append("매출 가정에 배달·포장 매출이 포함되는지 구분하세요.")
+    checks.append(market["market_position"]["field_check"])
     checks.append("계약 전 월 임대료 외 관리비, 보증금 이자, 소모품 비용을 고정비에 반영하세요.")
     return {
         "summary": f"{market['dong']} {market['industry']}의 12개월 운영 여력은 {resilience['score']}점({resilience['label']})입니다.",
         "decision": "계약 판단 전 현장 관측과 임대차 조건 검증이 필요한 시나리오입니다.",
         "evidence": [
             {"label": "AI 다음 분기 폐업률", "value": f"{market['ai_next_close_rate']}%", "interpretation": "행정동·업종 단위의 다음 분기 상대 위험 신호입니다."},
+            {"label": "4분면 시장 위치", "value": market["market_position"]["quadrant"], "interpretation": market["market_position"]["interpretation"]},
             {"label": "점포당 분기 추정매출", "value": f"{market['sales_per_store_quarterly_won'] / 10_000:,.0f}만 원", "interpretation": "동일 업종 행정동 평균과 비교하는 시장 수요 참고값입니다."},
             {"label": "시나리오 월 손익", "value": f"{scenario['monthly_profit_manwon']:,}만 원", "interpretation": "사용자가 입력한 비용·매출 가정으로 계산한 결과입니다."},
         ],

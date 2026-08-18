@@ -11,9 +11,10 @@ import argparse
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
-from build_dashboard import find_sources
+from build_dashboard import find_sources, next_quarter_code
 
 
 KEYS = ["quarter", "dong_code", "industry_code"]
@@ -88,6 +89,126 @@ def build_merged(frames: dict[str, pd.DataFrame]) -> pd.DataFrame:
     merged["net_entry_rate"] = merged["open_rate"] - merged["close_rate"]
     merged["population_per_store"] = merged["floating_population"] / merged["store_count"]
     return merged
+
+
+MODEL_FEATURES = [
+    ("current_close_rate", "현재 폐업률", "유지", "직전 상권 안정성"),
+    ("current_open_rate", "현재 개업률", "유지", "시장 진입·활력 신호"),
+    ("log_store_count", "점포 수(로그)", "유지", "규모 효과를 완화한 경쟁 규모"),
+    ("log_store_density", "유동인구 대비 점포밀도(로그)", "유지", "상권 수요 대비 경쟁 밀도"),
+    ("log_sales_per_store", "점포당 매출(로그)", "유지", "총매출 대신 점포별 수익 여력 비교"),
+    ("sales_per_store_growth", "점포당 매출 증감률", "유지", "최근 매출 추세"),
+    ("franchise_share", "프랜차이즈 비중", "유지", "업종 내 경쟁 구조"),
+    ("log_transactions_per_store", "점포당 거래건수(로그)", "유지", "매출 외 고객 이용량"),
+    ("growth_available", "매출증감률 보유 여부", "유지", "초기 분기 결측을 모델이 구분하도록 함"),
+    ("sales_won", "총 추정매출", "제외", "상권 크기에 좌우되므로 점포당 매출로 정규화"),
+    ("floating_population", "총 유동인구", "제외", "상권 크기에 좌우되므로 점포밀도로 정규화"),
+    ("close_count", "폐업 점포 수", "제외", "점포 수에 비례하므로 폐업률과 중복"),
+    ("next_close_rate", "다음 분기 폐업률", "제외", "예측 대상(정답값)으로만 사용 — 데이터 누수 방지"),
+]
+
+
+def modeling_panel(merged: pd.DataFrame) -> pd.DataFrame:
+    """Create an auditable, time-ordered modelling table with Pandas.
+
+    All feature columns are observable in ``quarter``.  ``next_close_rate`` is
+    joined only as a training label from the following quarter, never as an
+    input.  This mirrors the feature timing used by build_dashboard.py.
+    """
+    panel = merged.sort_values(["dong_code", "industry_code", "quarter"]).copy()
+    group_keys = ["dong_code", "industry_code"]
+    panel["sales_per_store_growth"] = (
+        panel.groupby(group_keys)["sales_per_store_won"].pct_change() * 100
+    ).clip(-100, 100)
+    panel["current_close_rate"] = panel["close_rate"]
+    panel["current_open_rate"] = panel["open_rate"]
+    panel["log_store_count"] = np.log1p(panel["store_count"])
+    panel["log_store_density"] = np.log1p(
+        panel["store_count"] * 1_000_000 / panel["floating_population"].clip(lower=1)
+    )
+    panel["log_sales_per_store"] = np.log1p(panel["sales_per_store_won"].clip(lower=0))
+    panel["franchise_share"] = panel["franchise_count"] / panel["store_count"].clip(lower=1)
+    panel["log_transactions_per_store"] = np.log1p(
+        (panel["transactions"] / panel["store_count"].clip(lower=1)).clip(lower=0)
+    )
+    panel["growth_available"] = panel["sales_per_store_growth"].notna().astype(int)
+    panel["sales_per_store_growth"] = panel["sales_per_store_growth"].fillna(0.0)
+    panel["next_quarter"] = panel["quarter"].map(next_quarter_code)
+
+    labels = panel[["quarter", "dong_code", "industry_code", "close_rate"]].rename(
+        columns={"quarter": "next_quarter", "close_rate": "next_close_rate"}
+    )
+    return panel.merge(labels, on=["next_quarter", "dong_code", "industry_code"], how="inner")
+
+
+def feature_selection_summary(panel: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Measure candidate-feature evidence without touching the held-out period."""
+    holdout_feature_quarter = panel["quarter"].max()
+    selection_data = panel.loc[panel["quarter"].lt(holdout_feature_quarter)].copy()
+    rows = []
+    for feature, label, decision, rationale in MODEL_FEATURES:
+        if feature in selection_data:
+            available = selection_data[feature].notna().mean() * 100
+            correlation = selection_data[feature].corr(selection_data["next_close_rate"])
+        else:
+            available, correlation = np.nan, np.nan
+        rows.append({
+            "feature": feature,
+            "label": label,
+            "decision": decision,
+            "selection_rationale": rationale,
+            "training_rows": len(selection_data),
+            "availability_percent": round(float(available), 1) if pd.notna(available) else None,
+            "pearson_correlation_with_next_close_rate": round(float(correlation), 4) if pd.notna(correlation) else None,
+            "absolute_correlation": round(abs(float(correlation)), 4) if pd.notna(correlation) else None,
+        })
+    summary = pd.DataFrame(rows).sort_values(
+        ["decision", "absolute_correlation"], ascending=[True, False], na_position="last"
+    )
+    protocol = {
+        "selection_feature_quarters": sorted(selection_data["quarter"].unique().tolist()),
+        "heldout_feature_quarter": holdout_feature_quarter,
+        "training_rows": int(len(selection_data)),
+        "label": "next_close_rate",
+        "leakage_rule": "다음 분기 폐업률은 학습 정답값으로만 결합하고 입력변수에서 제외",
+    }
+    return summary, protocol
+
+
+def write_modeling_report(output_dir: Path, feature_summary: pd.DataFrame,
+                          protocol: dict[str, object]) -> None:
+    """Write a presentation-ready explanation of Pandas feature selection."""
+    kept = feature_summary.loc[feature_summary["decision"].eq("유지")]
+    lines = [
+        "# Pandas 기반 변수 선택 및 데이터 누수 방지",
+        "",
+        "## 1. 시간 순서 데이터 구성",
+        "",
+        "- Pandas `merge`로 동일 행정동·업종의 다음 분기 폐업률을 학습 정답값으로 연결했습니다.",
+        "- 입력 변수는 모두 현재 분기에 관측 가능한 값만 사용했습니다.",
+        f"- 변수 선택용 분석 분기: {', '.join(protocol['selection_feature_quarters'])}",
+        f"- 홀드아웃 분기(변수 선택·계수 추정에서 제외): {protocol['heldout_feature_quarter']}",
+        f"- 분석 행 수: {protocol['training_rows']:,}건",
+        "",
+        "## 2. 데이터 누수 방지 원칙",
+        "",
+        f"- {protocol['leakage_rule']}",
+        "- 총매출·총유동인구·폐업점포 수처럼 상권 규모와 중복되는 원변수는 정규화한 변수로 대체했습니다.",
+        "",
+        "## 3. 최종 입력 변수",
+        "",
+        "| 변수 | 선택 근거 | 다음 분기 폐업률과의 상관계수 |",
+        "|---|---|---:|",
+    ]
+    for _, row in kept.iterrows():
+        correlation = row["pearson_correlation_with_next_close_rate"]
+        display = f"{correlation:.4f}" if pd.notna(correlation) else "-"
+        lines.append(f"| {row['label']} | {row['selection_rationale']} | {display} |")
+    lines.extend([
+        "",
+        "주의: 상관계수는 변수 선택의 보조 근거이며 인과관계를 뜻하지 않습니다. 최종 예측은 모든 유지 변수를 함께 사용한 Ridge 회귀 모델과 시간순 홀드아웃 검증으로 평가합니다.",
+    ])
+    (output_dir / "modeling_methodology.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def dashboard_quadrant_summary(dashboard_path: Path) -> pd.DataFrame:
@@ -173,13 +294,20 @@ def main() -> None:
         .sort_values("quarter")
     )
     quadrants = dashboard_quadrant_summary(args.dashboard_data)
+    panel = modeling_panel(merged)
+    feature_summary, selection_protocol = feature_selection_summary(panel)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     quality.to_csv(args.output_dir / "data_quality_summary.csv", index=False, encoding="utf-8-sig")
     quarterly.to_csv(args.output_dir / "quarterly_market_summary.csv", index=False, encoding="utf-8-sig")
     quadrants.to_csv(args.output_dir / "quadrant_summary.csv", index=False, encoding="utf-8-sig")
+    feature_summary.to_csv(args.output_dir / "feature_selection_summary.csv", index=False, encoding="utf-8-sig")
     write_report(args.output_dir, sources, quality, quarterly, quadrants)
-    print(f"Pandas analysis complete: {len(merged):,} merged rows -> {args.output_dir}")
+    write_modeling_report(args.output_dir, feature_summary, selection_protocol)
+    print(
+        f"Pandas analysis complete: {len(merged):,} merged rows, "
+        f"{len(feature_summary.loc[feature_summary['decision'].eq('유지')])} selected features -> {args.output_dir}"
+    )
 
 
 if __name__ == "__main__":

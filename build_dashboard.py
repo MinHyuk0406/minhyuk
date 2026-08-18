@@ -424,8 +424,13 @@ def main() -> None:
         close_p = percentile_ranks([record["cr"] for record in industry_records])
         density_p = percentile_ranks([record["s"] * 1_000_000 / max(record["p"], 1) for record in industry_records])
         sales_p = percentile_ranks([record["ss"] for record in industry_records])
-        decline_p = percentile_ranks([-(record["g"] if record["g"] is not None else 0) for record in industry_records])
+        growth_p = percentile_ranks([record["g"] if record["g"] is not None else 0 for record in industry_records])
+        transaction_p = percentile_ranks([record["tx"] / max(record["s"], 1) for record in industry_records])
+        demand_p = percentile_ranks([record["ps"] for record in industry_records])
+        franchise_p = percentile_ranks([record["f"] / max(record["s"], 1) for record in industry_records])
         prediction_p = percentile_ranks([record["mp"] for record in industry_records])
+        net_entry = [record["or"] - record["cr"] for record in industry_records]
+        net_entry_p = percentile_ranks(net_entry)
         for index, record in enumerate(industry_records):
             # The risk index is no longer a manually weighted formula. It is the
             # same-industry rank of the Ridge model's next-quarter closure-rate
@@ -437,7 +442,7 @@ def main() -> None:
                 round(100 * close_p[index]),
                 round(100 * density_p[index]),
                 round(100 * (1 - sales_p[index])),
-                round(100 * decline_p[index]),
+                round(100 * (1 - growth_p[index])),
             ]
             # Keep one shared rank for both labels shown in the dashboard. This
             # prevents the relative-risk card and forecast explanation drifting
@@ -445,11 +450,35 @@ def main() -> None:
             record["mr"] = risk
             record["ml"] = risk_label(record["mr"])
 
+            # Startup fit is deliberately broader than next-quarter closure
+            # risk.  The same-industry percentile components turn different
+            # units into comparable signals without claiming causality.
+            components = {
+                "stability": 100 * (1 - prediction_p[index]),
+                "revenue_capacity": 100 * (
+                    0.50 * sales_p[index] + 0.30 * transaction_p[index] + 0.20 * growth_p[index]
+                ),
+                "competition_balance": 100 * (
+                    0.70 * (1 - density_p[index]) + 0.30 * (1 - franchise_p[index])
+                ),
+                "market_momentum": 100 * (0.60 * net_entry_p[index] + 0.40 * growth_p[index]),
+                "demand_capacity": 100 * demand_p[index],
+            }
+            fit = (
+                0.30 * components["stability"]
+                + 0.25 * components["revenue_capacity"]
+                + 0.20 * components["competition_balance"]
+                + 0.15 * components["market_momentum"]
+                + 0.10 * components["demand_capacity"]
+            )
+            record["fc"] = {key: round(value) for key, value in components.items()}
+            record["fs"] = round(fit)
+            record["fl"] = "높음" if fit >= 70 else "보통" if fit >= 45 else "낮음"
+
         # The opportunity axis uses net entry rather than openings alone: a
         # place where openings are high but closures are even higher is not
         # automatically a growth market.  Both axes remain same-industry
         # comparisons so categories are not distorted by industry scale.
-        net_entry = [record["or"] - record["cr"] for record in industry_records]
         entry_median = statistics.median(net_entry)
         sales_median = statistics.median(record["ss"] for record in industry_records)
         for index, record in enumerate(industry_records):
@@ -492,6 +521,17 @@ def main() -> None:
             "industry_count": len(industries),
             "method": "same-industry empirical ranking",
             "ai_model": ai_metrics,
+            "startup_fit": {
+                "method": "same_industry_weighted_startup_fit",
+                "weights": {
+                    "stability": 0.30,
+                    "revenue_capacity": 0.25,
+                    "competition_balance": 0.20,
+                    "market_momentum": 0.15,
+                    "demand_capacity": 0.10,
+                },
+                "caution": "relative decision support score; not a success guarantee or causal estimate",
+            },
         },
         "industries": industries,
         "dongs": dongs,

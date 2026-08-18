@@ -71,6 +71,10 @@ python pandas_analysis.py --input-dir 'C:\Users\smho0\Downloads' --dashboard-dat
 - `quarterly_market_summary.csv`: 분기별 개·폐업률, 순점포 증감률, 점포당 매출 요약
 - `quadrant_summary.csv`: 4분면별 점포 수와 평균 개·폐업률·매출·AI 예측 결과
 - `analysis_report.md`: 발표에 바로 활용할 수 있는 분석 과정과 핵심 수치
+- `feature_selection_summary.csv`: 모델 후보 변수별 결측률·다음 분기 폐업률 상관계수·유지/제외 근거
+- `modeling_methodology.md`: 시간순 변수 선택, 정규화, 데이터 누수 방지 원칙을 정리한 발표용 문서
+
+변수 선택에서는 **현재 분기에 관측 가능한 값만 입력으로 사용**하고, 다음 분기 폐업률은 학습 정답값으로만 연결합니다. 총매출·총유동인구·폐업점포 수처럼 상권 규모와 중복되는 원변수는 점포당 매출·점포밀도·폐업률로 정규화해 대체합니다. 변수별 상관계수는 선택 근거의 보조 지표이며, 최종 평가는 시간순 홀드아웃 검증으로 수행합니다.
 
 ## 12개월 운영 시나리오
 
